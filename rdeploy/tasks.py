@@ -14,7 +14,7 @@ def set_project(ctx, config):
     """Sets the active gcloud project"""
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    ctx.run('gcloud config set project {project}'.format(project=config_dict['project']), echo=True)
+    ctx.run('gcloud config set project {project}'.format(project=config_dict['cloud_project']), echo=True)
 
 
 @task
@@ -24,7 +24,7 @@ def set_cluster(ctx, config):
     config_dict = settings_dict['configs'][config]
     ctx.run('gcloud container clusters get-credentials {cluster} --zone europe-west1-c --project {project}'.format(
         cluster=config_dict['cluster'],
-        project=config_dict['project']),
+        project=config_dict['cloud_project']),
         echo=True)
 
 
@@ -103,12 +103,12 @@ def upload_secrets(ctx, config, env_file):
 
     ctx.run(
         'kubectl delete secret {project_name}'.format(
-            project_name=settings_dict['project_name'],
+            project_name=config_dict['project_name'],
             namespace=config_dict['namespace']), warn=True)
 
     ctx.run(
         'kubectl create secret generic {project_name} --from-env-file {env_file}'.format(
-            project_name=settings_dict['project_name'],
+            project_name=config_dict['project_name'],
             env_file=env_file))
 
 
@@ -174,10 +174,10 @@ def install(ctx, config):
     ctx.run('helm install --name {project_name} '
             '-f {helm_values_path} '
             '{helm_chart} '
-            '--version {helm_chart_version}'.format(project_name=settings_dict['project_name'],
+            '--version {helm_chart_version}'.format(project_name=config_dict['project_name'],
                                                     helm_values_path=config_dict['helm_values_path'],
-                                                    helm_chart=settings_dict['helm_chart'],
-                                                    helm_chart_version=settings_dict['helm_chart_version']),
+                                                    helm_chart=config_dict['helm_chart'],
+                                                    helm_chart_version=config_dict['helm_chart_version']),
             echo=True)
 
 
@@ -195,11 +195,11 @@ def upgrade(ctx, config, version):
             '{helm_chart} '
             '-f {helm_values_path} '
             '--set image.tag={version} '
-            '--version {helm_chart_version}'.format(project_name=settings_dict['project_name'],
-                                                    helm_chart=settings_dict['helm_chart'],
+            '--version {helm_chart_version}'.format(project_name=config_dict['project_name'],
+                                                    helm_chart=config_dict['helm_chart'],
                                                     helm_values_path=config_dict['helm_values_path'],
                                                     version=version,
-                                                    helm_chart_version=settings_dict['helm_chart_version']),
+                                                    helm_chart_version=config_dict['helm_chart_version']),
             echo=True)
 
 
@@ -218,7 +218,7 @@ def bash(ctx, config):
     """Exec into the management container"""
     set_context(ctx, config)
     settings_dict = get_settings()
-    ctx.run('kubectl exec -i -t {project_name}-management sh'.format(project_name=settings_dict['project_name']),
+    ctx.run('kubectl exec -i -t {project_name}-management sh'.format(project_name=config_dict['project_name']),
             pty=True,
             echo=True)
 
@@ -229,7 +229,7 @@ def manage(ctx, config, cmd):
     set_context(ctx, config)
     settings_dict = get_settings()
     ctx.run('kubectl exec -i -t {project_name}-management /venv/bin/python manage.py {cmd}'.format(
-        project_name=settings_dict['project_name'],
+        project_name=config_dict['project_name'],
         cmd=cmd),
         pty=True,
         echo=True)
@@ -266,57 +266,47 @@ def git_release(ctx, version_bump):
 
 
 @task
-def build(ctx, tag):
+def build(ctx, config, tag):
     """
     Build project's docker image and pushes to remote repo
     """
     settings_dict = get_settings()
-    image_name = settings_dict['docker_image'].split(':')[0]
+    config_dict = settings_dict['configs'][config]
+    set_project(ctx, config)
+    image_name = config_dict['docker_image'].split(':')[0]
     image = '{}:{}'.format(image_name, tag)
-
     ctx.run('docker build -t %s -f etc/docker/Dockerfile .' % image, echo=True)
     ctx.run('gcloud docker -- push %s' % image, echo=True)
     return image
 
 
 @task
-def cloudbuild(ctx, tag):
+def cloudbuild(ctx, config, tag):
     """
      Build project's docker image using google cloud builder and pushes to remote repo
      """
     settings_dict = get_settings()
-    image_name = settings_dict['docker_image'].split(':')[0]
-
+    config_dict = settings_dict['configs'][config]
+    set_project(ctx, config)
+    image_name = config_dict['docker_image'].split(':')[0]
     ctx.run('gcloud container builds submit . --config etc/docker/cloudbuild.yaml '
             '--substitutions _IMAGE={image_name},TAG_NAME={tag_name}'.format(image_name=image_name,
                                                                              tag_name=tag), echo=True)
 
 
 @task
-def cloudbuild_initial(ctx, tag):
+def cloudbuild_initial(ctx, config, tag):
     """
      Build project's docker image using google cloud builder and pushes to remote repo
      """
     settings_dict = get_settings()
-    image_name = settings_dict['docker_image'].split(':')[0]
-
+    config_dict = settings_dict['configs'][config]
+    set_project(ctx, config)
+    image_name = config_dict['docker_image'].split(':')[0]
     ctx.run('gcloud container builds submit . --config etc/docker/cloudbuild-no-cache.yaml '
             '--substitutions _IMAGE={image_name},TAG_NAME={tag_name}'.format(image_name=image_name,
                                                                              tag_name=tag), echo=True)
 
-@task
-def create_static_bucket(ctx, config, bucket_name):
-    set_context(ctx, config)
-    ctx.run('gsutil mb gs://{bucket_name}'.format(bucket_name=bucket_name))
-    ctx.run('gsutil defacl set public-read gs://{bucket_name}'.format(bucket_name=bucket_name))
-
-
-@task
-def upload_static(ctx, config, bucket_name):
-    """Upload static files to gcloud bucket"""
-    set_context(ctx, config)
-    ctx.run('echo "yes\n" | python src/manage.py collectstatic')
-    ctx.run('gsutil -m rsync -d -r var/www/static gs://' + bucket_name + '/')
 
 # Utility functions
 ###################
