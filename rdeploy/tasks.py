@@ -5,6 +5,7 @@ from invoke.exceptions import ParseError
 import yaml
 from invoke import task
 import semver
+import json
 
 
 # Cluster Activation:
@@ -202,6 +203,18 @@ def upgrade(ctx, config, version):
                                                     helm_chart_version=config_dict['helm_chart_version']),
             echo=True)
 
+@task 
+def live_image(ctx, config):
+    """Displays the current docker image and version deployed"""
+    settings_dict = get_settings()
+    config_dict = settings_dict['configs'][config]
+    set_context(ctx, config)
+    result = ctx.run('kubectl get deployment {project_name} --output=json'.format(project_name=config_dict['project_name']),
+                        echo=True,
+                        hide='stdout')
+    server_config = json.loads(result.stdout)
+    image = server_config['spec']['template']['spec']['containers'][0]['image']
+    print(image)
 
 @task
 def proxy(ctx, config, port=8001):
@@ -218,6 +231,7 @@ def bash(ctx, config):
     """Exec into the management container"""
     set_context(ctx, config)
     settings_dict = get_settings()
+    config_dict = settings_dict['configs'][config]
     ctx.run('kubectl exec -i -t {project_name}-management sh'.format(project_name=config_dict['project_name']),
             pty=True,
             echo=True)
@@ -228,6 +242,7 @@ def manage(ctx, config, cmd):
     """Exec into the management container"""
     set_context(ctx, config)
     settings_dict = get_settings()
+    config_dict = settings_dict['configs'][config]
     ctx.run('kubectl exec -i -t {project_name}-management /venv/bin/python manage.py {cmd}'.format(
         project_name=config_dict['project_name'],
         cmd=cmd),
