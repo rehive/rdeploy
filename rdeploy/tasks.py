@@ -6,6 +6,7 @@ import yaml
 from invoke import task
 import semver
 import json
+import re
 
 
 # Cluster Activation:
@@ -70,7 +71,13 @@ def latest_version(ctx):
     """Checks the git tags and returns the current latest version"""
     ctx.run('git fetch && git fetch --tags')
     result = ctx.run('git tag --sort=-v:refname', hide='both')
-    latest_tag = result.stdout.split('\n')[0]
+    tags = result.stdout.split('\n')
+
+    regex = re.compile(r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(\+[0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*)?$')
+    version_tags = filter(regex.search, tags)
+
+    latest_tag = next(version_tags)
+
     if not latest_tag:
         raise ReleaseError('No tags found in repository')
     return latest_tag
