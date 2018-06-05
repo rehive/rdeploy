@@ -135,18 +135,11 @@ def create_volume_claim(ctx, name, disk):
 
 
 @task
-def upload_static(ctx, config):
+def upload_static(ctx, config, bucket_name):
     """Upload static files to gcloud bucket"""
-    config_dict = get_config(config)
-    set_project(ctx, config)
-    set_cluster(ctx, config)
-
-    venv_python = config_dict['VENV_PYTHON']
-
-    ctx.run(
-        'echo "yes\n" | {python} src/manage.py collectstatic'.format(python=venv_python))
-    ctx.run('gsutil -m rsync -d -r var/www/static gs://' +
-            config_dict['GCLOUD_STATIC_BUCKET'] + '/')
+    set_context(ctx, config)
+    ctx.run('echo "yes\n" | python src/manage.py collectstatic')
+    ctx.run('gsutil -m rsync -d -r var/www/static gs://' + bucket_name + '/')
 
 
 @task
@@ -164,8 +157,7 @@ def create_public_bucket(ctx, config, bucket_name):
     set_cluster(ctx, config)
 
     ctx.run('gsutil mb gs://{bucket_name}'.format(bucket_name=bucket_name))
-    ctx.run(
-        'gsutil defacl set public-read gs://{bucket_name}'.format(bucket_name=bucket_name))
+    ctx.run('gsutil defacl set public-read gs://{bucket_name}'.format(bucket_name=bucket_name))
 
 
 @task
