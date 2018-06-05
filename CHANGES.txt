@@ -1,5 +1,11 @@
 ----
 
+Version 0.0.6, Tue 05 Jun 2018
+===============================
+
+91352e57ae	Version bump to 0.0.5 and updating CHANGES.txt (Michail Brynard)
+
+
 Version 0.0.5, Tue 05 Jun 2018
 ===============================
 
