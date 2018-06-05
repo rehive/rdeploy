@@ -1,0 +1,13 @@
+----
+
+Version 0.0.5, Tue 05 Jun 2018
+===============================
+
+5419c2fb42	Fix static upload command (Michail Brynard)
+
+
+Version 0.0.5, Tue 05 Jun 2018
+===============================
+
+5419c2fb42	Fix static upload command (Michail Brynard)
+
