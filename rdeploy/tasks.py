@@ -352,6 +352,7 @@ def confirm(prompt='Continue?\n', failure_prompt='User cancelled task'):
     ParseError on negative response
     '''
     response = input(prompt)
+    response_bool = False
 
     try:
         response_bool = strtobool(response)
