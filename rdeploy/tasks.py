@@ -303,7 +303,7 @@ def cloudbuild(ctx, config, tag):
     config_dict = settings_dict['configs'][config]
     set_project(ctx, config)
     image_name = config_dict['docker_image'].split(':')[0]
-    ctx.run('gcloud container builds submit . --config etc/docker/cloudbuild.yaml '
+    ctx.run('gcloud builds submit . --config etc/docker/cloudbuild.yaml '
             '--substitutions _IMAGE={image_name},TAG_NAME={tag_name}'.format(image_name=image_name,
                                                                              tag_name=tag), echo=True)
 
@@ -317,7 +317,7 @@ def cloudbuild_initial(ctx, config, tag):
     config_dict = settings_dict['configs'][config]
     set_project(ctx, config)
     image_name = config_dict['docker_image'].split(':')[0]
-    ctx.run('gcloud container builds submit . --config etc/docker/cloudbuild-no-cache.yaml '
+    ctx.run('gcloud builds submit . --config etc/docker/cloudbuild-no-cache.yaml '
             '--substitutions _IMAGE={image_name},TAG_NAME={tag_name}'.format(image_name=image_name,
                                                                              tag_name=tag), echo=True)
 
