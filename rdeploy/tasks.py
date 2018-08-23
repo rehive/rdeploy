@@ -290,7 +290,8 @@ def build(ctx, config, tag):
     image_name = config_dict['docker_image'].split(':')[0]
     image = '{}:{}'.format(image_name, tag)
     ctx.run('docker build -t %s -f etc/docker/Dockerfile .' % image, echo=True)
-    ctx.run('gcloud docker -- push %s' % image, echo=True)
+    ctx.run('gcloud auth configure-docker', echo=True)
+    ctx.run('docker push %s' % image, echo=True)
     return image
 
 
