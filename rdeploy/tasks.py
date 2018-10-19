@@ -359,7 +359,7 @@ def confirm(prompt='Continue?\n', failure_prompt='User cancelled task'):
         response_bool = strtobool(response)
     except ValueError:
         print('Unkown Response. Confirm with y, yes, t, true, on or 1; cancel with n, no, f, false, off or 0.')
-        confirm(prompt, failure_prompt)
+        return confirm(prompt, failure_prompt)
 
     if not response_bool:
         raise ParseError(failure_prompt)
