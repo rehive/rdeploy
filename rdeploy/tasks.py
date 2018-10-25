@@ -76,10 +76,11 @@ def latest_version(ctx):
     regex = re.compile(r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(\+[0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*)?$')
     version_tags = filter(regex.search, tags)
 
-    latest_tag = next(version_tags)
-
-    if not latest_tag:
+    try:
+        latest_tag = next(version_tags)
+    except StopIteration:
         raise ReleaseError('No tags found in repository')
+
     return latest_tag
 
 
@@ -367,5 +368,5 @@ def confirm(prompt='Continue?\n', failure_prompt='User cancelled task'):
 
 # Exceptions
 ############
-def ReleaseError(Exception):
+class ReleaseError(BaseException):
     pass
