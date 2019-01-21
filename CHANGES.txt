@@ -1,5 +1,11 @@
 ----
 
+Version 0.0.13, Mon 21 Jan 2019
+================================
+
+fb181839a6	Hotfix: dictionary bug (Michail Brynard)
+
+
 Version 0.0.12, Mon 21 Jan 2019
 ================================
 
