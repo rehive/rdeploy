@@ -24,9 +24,9 @@ def set_cluster(ctx, config):
     """Sets the active cluster"""
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    if config_dict['cloud_zone']:
+    if config_dict.get('cloud_zone'):
         zone_or_region_param = '--zone {}'.format(config_dict['cloud_zone'])
-    elif config_dict['cloud_region']:
+    elif config_dict.get('cloud_region'):
         zone_or_region_param = '--region {}'.format(config_dict['cloud_region'])
     else:
         zone_or_region_param = '--zone europe-west1-c'
