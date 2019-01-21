@@ -30,7 +30,6 @@ def set_cluster(ctx, config):
         zone_or_region_param = '--region {}'.format(config_dict['cloud_region'])
     else:
         zone_or_region_param = '--zone europe-west1-c'
-
     ctx.run('gcloud container clusters get-credentials {cluster} --project {project} {zone_or_region_param}'.format(
         cluster=config_dict['cluster'],
         project=config_dict['cloud_project']),
