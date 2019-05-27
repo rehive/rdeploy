@@ -137,8 +137,16 @@ def create_volume(ctx, name, zone='europe-west1-c', size='100', type='pd-standar
 
 @task
 def create_volume_claim(ctx, name, disk):
+    settings_dict = get_settings()
+    install_flag = ''
+    if settings_dict.get('helm_version') != 3:
+        install_flag = "--name"
+
     ctx.run(
-        'helm install --name {name} rehive/gce-persistent-volume --set volumeName={name},gcePersistentDiskName={disk},claimName={name}')
+        'helm install {install_flag} {name} '
+        'rehive/gce-persistent-volume '
+        '--set volumeName={name},gcePersistentDiskName={disk},claimName={name}'
+        .format(name=name, install_flag=install_flag, disk=disk), echo=True)
 
 
 @task
@@ -177,11 +185,17 @@ def install(ctx, config):
     config_dict = settings_dict['configs'][config]
     set_context(ctx, config)
 
+    install_flag = ''
+    if settings_dict.get('helm_version') != 3:
+        install_flag = "--name"
+
+
     ctx.run('helm repo add rehive https://rehive.github.io/charts', echo=True)
-    ctx.run('helm install --name {project_name} '
+    ctx.run('helm install {helm_install_flag} {project_name} '
             '-f {helm_values_path} '
             '{helm_chart} '
             '--version {helm_chart_version}'.format(project_name=config_dict['project_name'],
+                                                    helm_install_flag=install_flag,
                                                     helm_values_path=config_dict['helm_values_path'],
                                                     helm_chart=config_dict['helm_chart'],
                                                     helm_chart_version=config_dict['helm_chart_version']),
