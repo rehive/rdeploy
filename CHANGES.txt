@@ -1,5 +1,20 @@
 ----
 
+Version 0.0.15, Fri 5 Jul 2019
+==============================
+
+31b94f0944  Bumped version to 0.0.15 (Mwangi)
+ede64320fa  Formatting fixes, bug fixes and deprecations (Mwangi)
+ - Fixed formatting for readability
+ - removed create_volume_claim action as it is deprecated
+ - updated gsutil commands to be bucketPolicy only
+ - updated bucket actions to be set on current project and not cluster
+ - removed proxy action due to kubectl deprecation
+ - Fixed initial versioning bug i.e when project has no tag
+d8cd0ea6fa  Install flags fixed for Helm v3.0.1-alpha (Mwangi)
+1c350ce854  Merging with master (Mwangi)
+
+
 Version 0.0.14, Mon 21 Jan 2019
 ================================
 
