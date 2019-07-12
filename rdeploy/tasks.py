@@ -161,8 +161,11 @@ def create_bucket(ctx, config, bucket_name):
     """Creates gcloud bucket for static files"""
     set_project(ctx, config)
 
-    ctx.run('gsutil mb -b on gs://{bucket_name}'
+    ctx.run('gsutil mb gs://{bucket_name}'
             .format(bucket_name=bucket_name), echo=False)
+    ctx.run('gsutil defacl set private gs://{bucket_name}'
+            .format(bucket_name=bucket_name), echo=False)
+
 
 
 @task
@@ -369,7 +372,8 @@ def confirm(prompt='Continue?\n', failure_prompt='User cancelled task'):
     try:
         response_bool = strtobool(response)
     except ValueError:
-        print('Unkown Response. Confirm with y, yes, t, true, on or 1; cancel with n, no, f, false, off or 0.')
+        print('Confirm with y, yes, t, true, on or 1; '
+              'cancel with n, no, f, false, off or 0.')
         return confirm(prompt, failure_prompt)
 
     if not response_bool:
