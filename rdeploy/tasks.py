@@ -191,8 +191,41 @@ def install(ctx, config):
     if settings_dict.get('helm_version') != 3:
         install_flag = "--name"
 
-    ctx.run('helm repo add rehive https://rehive.github.io/charts', echo=True)
+    repository = 'https://rehive.github.io/charts'
+    chart_directory = "var/helm/chart/{config}".format(config=config)
+    manifest_directory = "var/helm/manifests/{config}".format(config=config)
+    log_directory = "var/helm/log/{config}".format(config=config)
+    err_file = "{log_dir}/install.error.log".format(log_dir=log_directory)
+    out_file = "{log_dir}/install.out.log".format(log_dir=log_directory)
 
+    ctx.run('mkdir -p {chart_dir} {manifest_dir} {log_dir}'
+            .format(chart_dir=chart_directory,
+                    manifest_dir=manifest_directory,
+                    log_dir=log_directory),
+            echo=False)
+
+    ctx.run('helm fetch --repo {repository} --untar '
+            '--untardir {chart_dir} '
+            '--version {version} {chart_name}'
+            .format(repository=repository, chart_dir=chart_directory,
+                    version=config_dict['helm_chart_version'],
+                    chart_name=config_dict['helm_chart']),
+            echo=True)
+
+    ctx.run('helm template {chart_dir}/{chart_name}'
+            '--values {values_file} '
+            '--name {release_name} '
+            '--namespace {namespace} '
+            '--output-dir {manifest_dir} '
+            .format(chart_dir=chart_directory,
+                    chart_name=config_dict['helm_chart'],
+                    namespace=config_dict['namespace'],
+                    release_name=config_dict['project_name'],
+                    values_file=config_dict['helm_values_path']),
+            err_stream=open(error_file, 'w'),
+            out_stream=open(out_file, 'w'), echo=True)
+
+    ctx.run('helm repo add rehive https://rehive.github.io/charts', echo=True)
     ctx.run('helm install {helm_install_flag} {project_name} '
             '--values {helm_values_path} '
             '--version {helm_chart_version} {helm_chart}'
@@ -237,7 +270,6 @@ def live_image(ctx, config):
                      echo=True, hide='stdout')
     server_config = json.loads(result.stdout)
     image = server_config['spec']['template']['spec']['containers'][0]['image']
-
     print(image)
 
 
@@ -310,14 +342,14 @@ def build(ctx, config, tag):
 @task
 def cloudbuild(ctx, config, tag):
     """
-     Build project's docker image using google cloud builder and pushes to remote repo
-     """
+    Build project's docker image using google cloud builder and pushes to remote repo
+    """
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     set_project(ctx, config)
     image_name = config_dict['docker_image'].split(':')[0]
     ctx.run('gcloud builds submit .'
-            ' --config etc/docker/cloudbuild.yaml '
+            ' --config etc/docker/cloudbuild.yaml'
             ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
             .format(image_name=image_name, tag_name=tag), echo=True)
 
@@ -325,8 +357,8 @@ def cloudbuild(ctx, config, tag):
 @task
 def cloudbuild_initial(ctx, config, tag):
     """
-     Build project's docker image using google cloud builder and pushes to remote repo
-     """
+    Build project's docker image using google cloud builder and pushes to remote repo
+    """
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     set_project(ctx, config)
