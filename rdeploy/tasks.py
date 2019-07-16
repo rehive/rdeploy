@@ -211,7 +211,7 @@ def template_install(ctx, config):
                     chart_name=config_dict['helm_chart']),
             echo=True)
 
-    ctx.run('helm template {chart_dir}/{chart_name}'
+    ctx.run('helm template {chart_dir}/{chart_name} '
             '--values {values_file} '
             '--name {release_name} '
             '--namespace {namespace} '
@@ -222,10 +222,11 @@ def template_install(ctx, config):
                     namespace=config_dict['namespace'],
                     release_name=config_dict['project_name'],
                     values_file=config_dict['helm_values_path']),
-            err_stream=open(error_file, 'w'),
+            err_stream=open(err_file, 'w'),
             out_stream=open(out_file, 'w'), echo=True)
 
-    ctx.run('kubectl apply --recursive '
+    ctx.run('kubectl create namespace {namespace} || '
+            'kubectl apply --recursive '
             '--filename {manifest_dir}/{chart_name} '
             '--namespace {namespace} '
             .format(chart_name=config_dict['helm_chart'],
