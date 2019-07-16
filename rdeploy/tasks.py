@@ -179,24 +179,23 @@ def create_public_bucket(ctx, config, bucket_name):
 
 
 @task
-def install(ctx, config):
+def template_install(ctx, config):
     """
-    Installs kubernetes deployment
+    Installs kubernetes deployment from a helm template
     """
+
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     set_context(ctx, config)
-
-    install_flag = ''
-    if settings_dict.get('helm_version') != 3:
-        install_flag = "--name"
 
     repository = 'https://rehive.github.io/charts'
     chart_directory = "var/helm/chart/{config}".format(config=config)
     manifest_directory = "var/helm/manifests/{config}".format(config=config)
     log_directory = "var/helm/log/{config}".format(config=config)
-    err_file = "{log_dir}/install.error.log".format(log_dir=log_directory)
-    out_file = "{log_dir}/install.out.log".format(log_dir=log_directory)
+    err_file = "{log_dir}/template_install.error.log".format(
+        log_dir=log_directory)
+    out_file = "{log_dir}/template_install.out.log".format(
+        log_dir=log_directory)
 
     ctx.run('mkdir -p {chart_dir} {manifest_dir} {log_dir}'
             .format(chart_dir=chart_directory,
@@ -219,11 +218,33 @@ def install(ctx, config):
             '--output-dir {manifest_dir} '
             .format(chart_dir=chart_directory,
                     chart_name=config_dict['helm_chart'],
+                    manifest_dir=manifest_directory,
                     namespace=config_dict['namespace'],
                     release_name=config_dict['project_name'],
                     values_file=config_dict['helm_values_path']),
             err_stream=open(error_file, 'w'),
             out_stream=open(out_file, 'w'), echo=True)
+
+    ctx.run('kubectl apply --recursive '
+            '--filename {manifest_dir}/{chart_name} '
+            '--namespace {namespace} '
+            .format(chart_name=config_dict['helm_chart'],
+                    manifest_dir=manifest_directory,
+                    namespace=config_dict['namespace']),
+            echo=True)
+
+@task
+def install(ctx, config):
+    """
+    Installs kubernetes deployment
+    """
+    settings_dict = get_settings()
+    config_dict = settings_dict['configs'][config]
+    set_context(ctx, config)
+
+    install_flag = ''
+    if settings_dict.get('helm_version') != 3:
+        install_flag = "--name"
 
     ctx.run('helm repo add rehive https://rehive.github.io/charts', echo=True)
     ctx.run('helm install {helm_install_flag} {project_name} '
