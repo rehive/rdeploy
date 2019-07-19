@@ -196,6 +196,10 @@ def template_install(ctx, config):
         log_dir=log_directory)
     out_file = "{log_dir}/template_install.out.log".format(
         log_dir=log_directory)
+    chart_name = config_dict["helm_chart"]
+
+    if len(chart_name.split('/')) > 0:
+        chart_name = chart_name.spliat('/')[1]
 
     ctx.run('mkdir -p {chart_dir} {manifest_dir} {log_dir}'
             .format(chart_dir=chart_directory,
@@ -208,7 +212,7 @@ def template_install(ctx, config):
             '--version {version} {chart_name}'
             .format(repository=repository, chart_dir=chart_directory,
                     version=config_dict['helm_chart_version'],
-                    chart_name=config_dict['helm_chart']),
+                    chart_name=chart_name),
             echo=True)
 
     ctx.run('helm template {chart_dir}/{chart_name} '
@@ -217,7 +221,7 @@ def template_install(ctx, config):
             '--namespace {namespace} '
             '--output-dir {manifest_dir} '
             .format(chart_dir=chart_directory,
-                    chart_name=config_dict['helm_chart'],
+                    chart_name=chart_name,
                     manifest_dir=manifest_directory,
                     namespace=config_dict['namespace'],
                     release_name=config_dict['project_name'],
@@ -229,7 +233,7 @@ def template_install(ctx, config):
             'kubectl apply --recursive '
             '--filename {manifest_dir}/{chart_name} '
             '--namespace {namespace} '
-            .format(chart_name=config_dict['helm_chart'],
+            .format(chart_name=chart_name,
                     manifest_dir=manifest_directory,
                     namespace=config_dict['namespace']),
             echo=True)
