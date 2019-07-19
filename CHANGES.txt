@@ -1,5 +1,14 @@
 ----
 
+Version 0.0.16, Thu 19 Jul 2019
+===============================
+
+7b8bd11 Merge pull request #19 from rehive/feature/18-tiller-migration (Mwangi)
+3a16ae3 Tested the template_install (Mwangi)
+35f082d split install and template_install (Mwangi)
+6868aac WIP Added the helm fetch and helm template commands (Mwangi)
+c3deaee Default ACL set to private for non-static buckets (Mwangi)
+
 Version 0.0.15, Fri 5 Jul 2019
 ==============================
 
