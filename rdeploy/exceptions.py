@@ -1,0 +1,2 @@
+class ReleaseError(BaseException):
+    pass
