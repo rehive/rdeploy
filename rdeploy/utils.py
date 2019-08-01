@@ -1,5 +1,10 @@
 import os
 import yaml
+try:
+    from yaml import CLoader as Loader
+except ImportError:
+    from yaml import Loader
+
 
 from distutils.util import strtobool
 from invoke.exceptions import ParseError
@@ -18,10 +23,10 @@ def format_yaml(template, config):
     return formatted
 
 
-def get_settings():
+def get_settings(path="rdeploy.yaml"):
     """Import project settings"""
-    with open('rdeploy.yaml', 'r') as stream:
-        settings_dict = yaml.load(stream)
+    with open(path, 'r') as stream:
+        settings_dict = yaml.load(stream, Loader=Loader)
 
     return settings_dict
 
