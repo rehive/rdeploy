@@ -370,10 +370,14 @@ def cloudbuild(ctx, config, tag):
     config_dict = settings_dict['configs'][config]
     set_project(ctx, config)
     image_name = config_dict['docker_image'].split(':')[0]
+    log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
+        project=config_dict['cloud_project'], image=image_name, tag_name=tag)
     ctx.run('gcloud builds submit .'
             ' --config etc/docker/cloudbuild.yaml'
             ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
-            .format(image_name=image_name, tag_name=tag), echo=True)
+            ' --gcs-log-dir {log_dir}'
+            .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
+            echo=True)
 
 
 @task
@@ -385,7 +389,11 @@ def cloudbuild_initial(ctx, config, tag):
     config_dict = settings_dict['configs'][config]
     set_project(ctx, config)
     image_name = config_dict['docker_image'].split(':')[0]
+    log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
+        project=config_dict['cloud_project'], image=image_name, tag_name=tag)
     ctx.run('gcloud builds submit .'
             ' --config etc/docker/cloudbuild-no-cache.yaml'
             ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
-            .format(image_name=image_name, tag_name=tag), echo=True)
+            ' --gcs-log-dir {log_dir}'
+            .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
+            echo=True)
