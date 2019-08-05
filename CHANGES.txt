@@ -1,6 +1,6 @@
 ----
 
-Version 0.0.17-rc.2, Mon 05 Aug 2019
+Version 0.0.17, Mon 05 Aug 2019
 ====================================
 
 0283cd1 Added gcs-log-dir option to the cloudbuild methods (Mwangi)
