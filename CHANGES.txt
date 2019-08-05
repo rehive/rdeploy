@@ -1,5 +1,11 @@
 ----
 
+Version 0.0.17-rc.1, Mon 05 Aug 2019
+====================================
+
+0283cd1 Added gcs-log-dir option to the cloudbuild methods (Mwangi)
+7e98584 Refactoring the tasks file (Mwangi)
+
 Version 0.0.16, Thu 19 Jul 2019
 ===============================
 
