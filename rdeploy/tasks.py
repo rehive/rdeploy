@@ -328,12 +328,13 @@ def compose(ctx, cmd, tag):
 # Build commands
 ################
 @task
-def git_release(ctx, version_bump):
+def git_release(ctx, version_bump, force=False):
     """
     Bump version, push git tag
     N.B. Commit changes first
     """
-    confirm('Did you remember to commit all changes? ')
+    if not force:
+        confirm('Did you remember to commit all changes? ')
 
     bumped_version = next_version(ctx, bump=version_bump)
     tag = bumped_version
