@@ -333,6 +333,7 @@ def git_release(ctx, version_bump, force=False):
     """
     Bump version, push git tag
     N.B. Commit changes first
+    the force flag assumes you have committed all changes
     """
     if not force:
         confirm('Did you remember to commit all changes? ')
