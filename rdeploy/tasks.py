@@ -314,7 +314,7 @@ def manage(ctx, config, cmd):
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     ctx.run('kubectl exec -i -t {project_name}-management'
-            ' /venv/bin/python manage.py {cmd}'
+            ' python  manage.py {cmd}'
             .format(project_name=config_dict['project_name'], cmd=cmd),
             pty=True, echo=True)
 
