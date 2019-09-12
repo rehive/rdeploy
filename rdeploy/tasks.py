@@ -68,6 +68,7 @@ def next_version(ctx, bump):
         latest_tag = '0.0.0'
 
     increment = {
+        'build': semver.bump_build,
         'pre': semver.bump_prerelease,
         'patch': semver.bump_patch,
         'minor': semver.bump_minor,
