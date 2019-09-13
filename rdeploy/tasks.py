@@ -302,9 +302,10 @@ def bash(ctx, config):
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    ctx.run('kubectl exec -i -t {project_name}-management sh'
+    ctx.run('kubectl exec -i -t {project_name}-management -- '
+            '/bin/sh -c "/bin/bash || /bin/sh"'
             .format(project_name=config_dict['project_name']),
-            pty=True, echo=True)
+            pty=True, warn=False, echo=True)
 
 
 @task
