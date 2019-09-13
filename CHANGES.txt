@@ -1,7 +1,17 @@
 ----
 
+Version 0.0.18, Fri 13 Sep 2019
+===============================
+
+0a1a8ff preference placed on bash instead of bourne shell (Mwangi)
+9dbee31 explicitly added the separator for the command in the kubectl exec command (Mwangi)
+41e48c7 added docs for the force flag (Mwangi)
+e7f11bf removed redundant prefix \venv\bin for future changes to our docker images (Mwangi)
+a9a5ac1 added a build option for git release (Mwangi)
+dee9af8 removed input option for confirm changes have been committed (Mwangi)
+
 Version 0.0.17, Mon 05 Aug 2019
-====================================
+===============================
 
 0283cd1 Added gcs-log-dir option to the cloudbuild methods (Mwangi)
 9efa2c9 fixed the YAML Loader (Mwangi)
