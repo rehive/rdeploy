@@ -68,6 +68,7 @@ def next_version(ctx, bump):
         latest_tag = '0.0.0'
 
     increment = {
+        'build': semver.bump_build,
         'pre': semver.bump_prerelease,
         'patch': semver.bump_patch,
         'minor': semver.bump_minor,
@@ -301,9 +302,10 @@ def bash(ctx, config):
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    ctx.run('kubectl exec -i -t {project_name}-management sh'
+    ctx.run('kubectl exec -i -t {project_name}-management -- '
+            '/bin/sh -c "/bin/bash || /bin/sh"'
             .format(project_name=config_dict['project_name']),
-            pty=True, echo=True)
+            pty=True, warn=False, echo=True)
 
 
 @task
@@ -313,7 +315,7 @@ def manage(ctx, config, cmd):
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     ctx.run('kubectl exec -i -t {project_name}-management'
-            ' /venv/bin/python manage.py {cmd}'
+            ' -- python  manage.py {cmd}'
             .format(project_name=config_dict['project_name'], cmd=cmd),
             pty=True, echo=True)
 
@@ -328,12 +330,14 @@ def compose(ctx, cmd, tag):
 # Build commands
 ################
 @task
-def git_release(ctx, version_bump):
+def git_release(ctx, version_bump, force=False):
     """
     Bump version, push git tag
     N.B. Commit changes first
+    the force flag assumes you have committed all changes
     """
-    confirm('Did you remember to commit all changes? ')
+    if not force:
+        confirm('Did you remember to commit all changes? ')
 
     bumped_version = next_version(ctx, bump=version_bump)
     tag = bumped_version
