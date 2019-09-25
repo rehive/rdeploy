@@ -158,21 +158,19 @@ def upload_static(ctx, config, bucket_name):
 
 
 @task
-def create_bucket(ctx, config, bucket_name):
+def create_bucket(ctx, config, bucket_name, user_location='eu'):
     """Creates gcloud bucket for static files"""
     set_project(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
 
-    if config_dict.get('cloud_zone'):
-        zone_or_region_param = config_dict['cloud_zone']
-    elif config_dict.get('cloud_region'):
-        zone_or_region_param = config_dict['cloud_region']
+    if user_location == None and config_dict.get('cloud_region'):
+        location = config_dict['cloud_region']
     else:
-        zone_or_region_param = 'europe-west1-c'
+        location = user_location
 
-    ctx.run('gsutil mb gs://{bucket_name} -l {zone}'
-            .format(bucket_name=bucket_name, zone=zone_or_region_param),
+    ctx.run('gsutil mb gs://{bucket_name} -l {location}'
+            .format(bucket_name=bucket_name, location=location),
             echo=False)
     ctx.run('gsutil defacl set private gs://{bucket_name}'
             .format(bucket_name=bucket_name), echo=False)
@@ -180,21 +178,19 @@ def create_bucket(ctx, config, bucket_name):
 
 
 @task
-def create_public_bucket(ctx, config, bucket_name):
+def create_public_bucket(ctx, config, bucket_name, user_location='eu'):
     """Creates gcloud bucket for static files"""
     set_project(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
 
-    if config_dict.get('cloud_zone'):
-        zone_or_region_param = config_dict['cloud_zone']
-    elif config_dict.get('cloud_region'):
-        zone_or_region_param = config_dict['cloud_region']
+    if user_location == None and config_dict.get('cloud_region'):
+        location = config_dict['cloud_region']
     else:
-        zone_or_region_param = 'europe-west1-c'
+        location = user_location
 
-    ctx.run('gsutil mb gs://{bucket_name} -l {zone}'
-            .format(bucket_name=bucket_name, zone=zone_or_region_param),
+    ctx.run('gsutil mb gs://{bucket_name} -l {location}'
+            .format(bucket_name=bucket_name, location=location),
             echo=False)
     ctx.run('gsutil iam ch allUsers:objectViewer gs://{bucket_name}'
             .format(bucket_name=bucket_name))
