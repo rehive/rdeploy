@@ -1,0 +1,31 @@
+version: '2'
+configs:
+  production:
+    project_name: example
+    docker_image: example.azurecr.io/example
+    cloud_provider:
+      name: azure
+      subscription_id: 57800aa9-e115-4ede-9b70-0e1ce97294f6
+      resource_group: example
+      region: westeurope
+      kube_cluster: example
+    namespace: example
+    helm_values_path: ./etc/helm/production/values.yaml
+    helm_version: 3
+    helm_chart: rehive/rehive-service
+    helm_chart_version: 0.1.38
+  staging:
+    project_name: example
+    docker_image: example.azurecr.io/luuun-website
+    cloud_provider:
+      name: azure
+      subscription_id: 57800aa9-e115-4ede-9b70-0e1ce97294f6
+      resource_group: example
+      region: westeurope
+      kube_cluster: example
+      container_registry: example
+    namespace: example
+    helm_values_path: ./etc/helm/production/values.yaml
+    helm_version: 3
+    helm_chart: rehive/rehive-service
+    helm_chart_version: 0.1.38
