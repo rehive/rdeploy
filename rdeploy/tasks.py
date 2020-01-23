@@ -1,13 +1,16 @@
+import json
 import os
-from distutils.util import strtobool
-from invoke.exceptions import ParseError
+import re
+import semver
 
-import yaml
 from invoke import task
 import semver
 import json
 import re
 from packaging import version
+from invoke.exceptions import ParseError
+from rdeploy.exceptions import ReleaseError
+from rdeploy.utils import get_settings, confirm
 
 
 # Cluster Activation:
@@ -102,6 +105,7 @@ def next_version(ctx, bump):
         latest_tag = '0.0.0'
 
     increment = {
+        'build': semver.bump_build,
         'pre': semver.bump_prerelease,
         'patch': semver.bump_patch,
         'minor': semver.bump_minor,
@@ -339,9 +343,10 @@ def bash(ctx, config):
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    ctx.run('kubectl exec -i -t {project_name}-management sh'
+    ctx.run('kubectl exec -i -t {project_name}-management -- '
+            '/bin/sh -c "/bin/bash || /bin/sh"'
             .format(project_name=config_dict['project_name']),
-            pty=True, echo=True)
+            pty=True, warn=False, echo=True)
 
 
 @task
@@ -351,7 +356,7 @@ def manage(ctx, config, cmd):
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     ctx.run('kubectl exec -i -t {project_name}-management'
-            ' /venv/bin/python manage.py {cmd}'
+            ' -- python  manage.py {cmd}'
             .format(project_name=config_dict['project_name'], cmd=cmd),
             pty=True, echo=True)
 
@@ -366,12 +371,14 @@ def compose(ctx, cmd, tag):
 # Build commands
 ################
 @task
-def git_release(ctx, version_bump):
+def git_release(ctx, version_bump, force=False):
     """
     Bump version, push git tag
     N.B. Commit changes first
+    the force flag assumes you have committed all changes
     """
-    confirm('Did you remember to commit all changes? ')
+    if not force:
+        confirm('Did you remember to commit all changes? ')
 
     bumped_version = next_version(ctx, bump=version_bump)
     tag = bumped_version
@@ -422,17 +429,25 @@ def cloudbuild(ctx, config, tag):
                         image_name=image_name, 
                         tag_name=tag), echo=True)
         else:
+            log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
+            project=provider_data['project'], image=image_name, tag_name=tag)
             ctx.run('gcloud builds submit .'
                 ' --config etc/docker/cloudbuild.yaml'
                 ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
-                .format(image_name=image_name, tag_name=tag), echo=True)
+                ' --gcs-log-dir {log_dir}'
+                .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
+                echo=True)
 
     
     else:
+        log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
+        project=config_dict['cloud_project'], image=image_name, tag_name=tag)
         ctx.run('gcloud builds submit .'
-                ' --config etc/docker/cloudbuild.yaml'
-                ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
-                .format(image_name=image_name, tag_name=tag), echo=True)
+            ' --config etc/docker/cloudbuild.yaml'
+            ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
+            ' --gcs-log-dir {log_dir}'
+            .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
+            echo=True)
         
 
 @task
@@ -444,6 +459,7 @@ def cloudbuild_initial(ctx, config, tag):
     config_dict = settings_dict['configs'][config]
     set_project(ctx, config)
     image_name = config_dict['docker_image'].split(':')[0]
+
     if version.parse(str(settings_dict['version'])) > version.parse('1'):
         provider_data = config_dict.get('cloud_provider')
         if provider_data and provider_data['name'] == 'azure':
@@ -457,10 +473,24 @@ def cloudbuild_initial(ctx, config, tag):
                         image_name=image_name, 
                         tag_name=tag), echo=True)
         else:
+            log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
+            project=provider_data['project'], image=image_name, tag_name=tag)
             ctx.run('gcloud builds submit .'
+                    ' --config etc/docker/cloudbuild-no-cache.yaml'
+                    ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
+                    ' --gcs-log-dir {log_dir}'
+                    .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
+                    echo=True)
+    
+    else:
+        log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
+        project=config_dict['cloud_project'], image=image_name, tag_name=tag)
+        ctx.run('gcloud builds submit .'
                 ' --config etc/docker/cloudbuild-no-cache.yaml'
                 ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
-                .format(image_name=image_name, tag_name=tag), echo=True)
+                ' --gcs-log-dir {log_dir}'
+                .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
+                echo=True)
 
 
 # Utility functions
@@ -510,3 +540,4 @@ def confirm(prompt='Continue?\n', failure_prompt='User cancelled task'):
 ############
 class ReleaseError(BaseException):
     pass
+
