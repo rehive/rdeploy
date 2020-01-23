@@ -101,6 +101,7 @@ setup(
         'pyyaml',
         'python-dotenv>=0.5.1',
         'semver',
+        'packaging',
     ],
 
     # List additional groups of dependencies here (e.g. development
@@ -113,6 +114,7 @@ setup(
             'pyyaml',
             'python-dotenv>=0.5.1',
             'semver',
+            'packaging',
         ],
         'test': ['coverage'],
     },

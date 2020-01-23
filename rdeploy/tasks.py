@@ -4,6 +4,10 @@ import re
 import semver
 
 from invoke import task
+import semver
+import json
+import re
+from packaging import version
 from invoke.exceptions import ParseError
 from rdeploy.exceptions import ReleaseError
 from rdeploy.utils import get_settings, confirm
@@ -16,8 +20,17 @@ def set_project(ctx, config):
     """Sets the active gcloud project"""
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    ctx.run('gcloud config set project {project}'
-            .format(project=config_dict['cloud_project']), echo=True)
+    if version.parse(str(settings_dict['version'])) > version.parse('1'):
+        provider_data = config_dict.get('cloud_provider')
+        if provider_data and provider_data['name'] == 'azure':
+            ctx.run('az account set -s {subscription}'
+                .format(subscription=provider_data['subscription_id']), echo=True)
+        elif provider_data and provider_data['name'] == 'gcp':
+            ctx.run('gcloud config set project {project}'
+                .format(project=provider_data['project']), echo=True)
+    else:
+        ctx.run('gcloud config set project {project}'
+                .format(project=config_dict['cloud_project']), echo=True)
 
 
 @task
@@ -26,19 +39,43 @@ def set_cluster(ctx, config):
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
 
-    if config_dict.get('cloud_zone'):
-        zone_or_region_param = '--zone {}'.format(config_dict['cloud_zone'])
-    elif config_dict.get('cloud_region'):
-        zone_or_region_param = '--region {}'.format(config_dict['cloud_region'])
-    else:
-        zone_or_region_param = '--zone europe-west1-c'
+    if version.parse(str(settings_dict['version'])) > version.parse('1'):
+        provider_data = config_dict.get('cloud_provider')
+        if provider_data and provider_data['name'] == 'azure':
+            ctx.run('az aks get-credentials -g {group} -n {cluster} --context aks-{region}-{cluster} --overwrite-existing'
+                    .format(group=provider_data['resource_group'],
+                            cluster=provider_data['kube_cluster'],
+                            region=provider_data['region'],
+                            ), echo=True)
 
-    ctx.run('gcloud container clusters get-credentials {cluster}'
-            ' --project {project} {zone_or_region_param}'
-            .format(cluster=config_dict['cluster'],
-                    project=config_dict['cloud_project'],
-                    zone_or_region_param=zone_or_region_param),
-            echo=True)
+        if provider_data and provider_data['name'] == 'gcp':
+            if provider_data.get('zone'):
+                zone_or_region_param = '--zone {}'.format(config_dict['cloud_zone'])
+            elif provider_data.get('region'):
+                zone_or_region_param = '--region {}'.format(config_dict['cloud_region'])
+
+            ctx.run('gcloud container clusters get-credentials {cluster}'
+                    ' --project {project} {zone_or_region_param}'
+                    .format(cluster=provider_data['kube_cluster'],
+                            project=provider_data['project'],
+                            zone_or_region_param=zone_or_region_param),
+                    echo=True)
+
+    
+    else:
+        if config_dict.get('cloud_zone'):
+            zone_or_region_param = '--zone {}'.format(config_dict['cloud_zone'])
+        elif config_dict.get('cloud_region'):
+            zone_or_region_param = '--region {}'.format(config_dict['cloud_region'])
+        else:
+            zone_or_region_param = '--zone europe-west1-c'
+
+        ctx.run('gcloud container clusters get-credentials {cluster}'
+                ' --project {project} {zone_or_region_param}'
+                .format(cluster=config_dict['cluster'],
+                        project=config_dict['cloud_project'],
+                        zone_or_region_param=zone_or_region_param),
+                echo=True)
 
 
 @task
@@ -197,6 +234,10 @@ def template_install(ctx, config):
         log_dir=log_directory)
     out_file = "{log_dir}/template_install.out.log".format(
         log_dir=log_directory)
+    chart_name = config_dict["helm_chart"]
+
+    if len(chart_name.split('/')) > 0:
+        chart_name = chart_name.spliat('/')[1]
 
     ctx.run('mkdir -p {chart_dir} {manifest_dir} {log_dir}'
             .format(chart_dir=chart_directory,
@@ -209,7 +250,7 @@ def template_install(ctx, config):
             '--version {version} {chart_name}'
             .format(repository=repository, chart_dir=chart_directory,
                     version=config_dict['helm_chart_version'],
-                    chart_name=config_dict['helm_chart']),
+                    chart_name=chart_name),
             echo=True)
 
     ctx.run('helm template {chart_dir}/{chart_name} '
@@ -218,7 +259,7 @@ def template_install(ctx, config):
             '--namespace {namespace} '
             '--output-dir {manifest_dir} '
             .format(chart_dir=chart_directory,
-                    chart_name=config_dict['helm_chart'],
+                    chart_name=chart_name,
                     manifest_dir=manifest_directory,
                     namespace=config_dict['namespace'],
                     release_name=config_dict['project_name'],
@@ -230,7 +271,7 @@ def template_install(ctx, config):
             'kubectl apply --recursive '
             '--filename {manifest_dir}/{chart_name} '
             '--namespace {namespace} '
-            .format(chart_name=config_dict['helm_chart'],
+            .format(chart_name=chart_name,
                     manifest_dir=manifest_directory,
                     namespace=config_dict['namespace']),
             echo=True)
@@ -245,11 +286,11 @@ def install(ctx, config):
     set_context(ctx, config)
 
     install_flag = ''
-    if settings_dict.get('helm_version') != 3:
-        install_flag = "--name"
+    if str(config_dict.get('helm_version')) != '3':
+        install_flag = " --name"
 
     ctx.run('helm repo add rehive https://rehive.github.io/charts', echo=True)
-    ctx.run('helm install {helm_install_flag} {project_name} '
+    ctx.run('helm install{helm_install_flag} {project_name} '
             '--values {helm_values_path} '
             '--version {helm_chart_version} {helm_chart}'
             .format(project_name=config_dict['project_name'],
@@ -374,15 +415,40 @@ def cloudbuild(ctx, config, tag):
     config_dict = settings_dict['configs'][config]
     set_project(ctx, config)
     image_name = config_dict['docker_image'].split(':')[0]
-    log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
+
+    if version.parse(str(settings_dict['version'])) > version.parse('1'):
+        provider_data = config_dict.get('cloud_provider')
+        if provider_data and provider_data['name'] == 'azure':
+            ctx.run('az acr run'
+                ' -r {container_registry}'
+                ' -f ./etc/docker/acr.yaml'
+                ' --set IMAGE={image_name}'
+                ' --set TAG_NAME={tag_name}'
+                ' .'
+                .format(container_registry=provider_data['container_registry'],
+                        image_name=image_name, 
+                        tag_name=tag), echo=True)
+        else:
+            log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
+            project=provider_data['project'], image=image_name, tag_name=tag)
+            ctx.run('gcloud builds submit .'
+                ' --config etc/docker/cloudbuild.yaml'
+                ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
+                ' --gcs-log-dir {log_dir}'
+                .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
+                echo=True)
+
+    
+    else:
+        log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
         project=config_dict['cloud_project'], image=image_name, tag_name=tag)
-    ctx.run('gcloud builds submit .'
+        ctx.run('gcloud builds submit .'
             ' --config etc/docker/cloudbuild.yaml'
             ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
             ' --gcs-log-dir {log_dir}'
             .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
             echo=True)
-
+        
 
 @task
 def cloudbuild_initial(ctx, config, tag):
@@ -393,11 +459,85 @@ def cloudbuild_initial(ctx, config, tag):
     config_dict = settings_dict['configs'][config]
     set_project(ctx, config)
     image_name = config_dict['docker_image'].split(':')[0]
-    log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
+
+    if version.parse(str(settings_dict['version'])) > version.parse('1'):
+        provider_data = config_dict.get('cloud_provider')
+        if provider_data and provider_data['name'] == 'azure':
+            ctx.run('az acr run'
+                ' -r {container_registry}'
+                ' -f ./etc/docker/acr-no-cache.yaml'
+                ' --set IMAGE={image_name}'
+                ' --set TAG_NAME={tag_name}'
+                ' .'
+                .format(container_registry=provider_data['container_registry'],
+                        image_name=image_name, 
+                        tag_name=tag), echo=True)
+        else:
+            log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
+            project=provider_data['project'], image=image_name, tag_name=tag)
+            ctx.run('gcloud builds submit .'
+                    ' --config etc/docker/cloudbuild-no-cache.yaml'
+                    ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
+                    ' --gcs-log-dir {log_dir}'
+                    .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
+                    echo=True)
+    
+    else:
+        log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
         project=config_dict['cloud_project'], image=image_name, tag_name=tag)
-    ctx.run('gcloud builds submit .'
-            ' --config etc/docker/cloudbuild-no-cache.yaml'
-            ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
-            ' --gcs-log-dir {log_dir}'
-            .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
-            echo=True)
+        ctx.run('gcloud builds submit .'
+                ' --config etc/docker/cloudbuild-no-cache.yaml'
+                ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
+                ' --gcs-log-dir {log_dir}'
+                .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
+                echo=True)
+
+
+# Utility functions
+###################
+def get_path():
+    file_path = os.path.dirname(os.path.realpath(__file__))
+    root_path = os.path.dirname(os.path.dirname(file_path))
+    return root_path
+
+
+def format_yaml(template, config):
+    """Replace in ${ENV_VAR} in template with value"""
+    formatted = template
+    for k, v in config.items():
+        formatted = formatted.replace('${%s}' % k, v)
+    return formatted
+
+
+def get_settings():
+    """Import project settings"""
+    with open('rdeploy.yaml', 'r') as stream:
+        settings_dict = yaml.load(stream, Loader=yaml.FullLoader)
+
+    return settings_dict
+
+
+def confirm(prompt='Continue?\n', failure_prompt='User cancelled task'):
+    '''
+    Prompt the user to continue. Repeat on unknown response. Raise
+    ParseError on negative response
+    '''
+    response = input(prompt)
+    response_bool = False
+
+    try:
+        response_bool = strtobool(response)
+    except ValueError:
+        print('Confirm with y, yes, t, true, on or 1; '
+              'cancel with n, no, f, false, off or 0.')
+        return confirm(prompt, failure_prompt)
+
+    if not response_bool:
+        raise ParseError(failure_prompt)
+
+
+# Exceptions
+############
+class ReleaseError(BaseException):
+    pass
+
