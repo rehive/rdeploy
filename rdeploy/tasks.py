@@ -7,6 +7,7 @@ from invoke import task
 import semver
 import json
 import re
+import yaml
 from packaging import version
 from invoke.exceptions import ParseError
 from rdeploy.exceptions import ReleaseError
