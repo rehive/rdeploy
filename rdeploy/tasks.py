@@ -21,7 +21,7 @@ def set_project(ctx, config):
     """Sets the active gcloud project"""
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    if version.parse(str(settings_dict['version'])) > version.parse('1'):
+    if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('1'):
         provider_data = config_dict.get('cloud_provider')
         if provider_data and provider_data['name'] == 'azure':
             ctx.run('az account set -s {subscription}'
@@ -40,7 +40,7 @@ def set_cluster(ctx, config):
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
 
-    if version.parse(str(settings_dict['version'])) > version.parse('1'):
+    if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('1'):
         provider_data = config_dict.get('cloud_provider')
         if provider_data and provider_data['name'] == 'azure':
             ctx.run('az aks get-credentials -g {group} -n {cluster} --context aks-{region}-{cluster} --overwrite-existing'
@@ -51,9 +51,9 @@ def set_cluster(ctx, config):
 
         if provider_data and provider_data['name'] == 'gcp':
             if provider_data.get('zone'):
-                zone_or_region_param = '--zone {}'.format(config_dict['cloud_zone'])
+                zone_or_region_param = '--zone {}'.format(provider_data['zone'])
             elif provider_data.get('region'):
-                zone_or_region_param = '--region {}'.format(config_dict['cloud_region'])
+                zone_or_region_param = '--region {}'.format(provider_data['region'])
 
             ctx.run('gcloud container clusters get-credentials {cluster}'
                     ' --project {project} {zone_or_region_param}'
@@ -417,7 +417,7 @@ def cloudbuild(ctx, config, tag):
     set_project(ctx, config)
     image_name = config_dict['docker_image'].split(':')[0]
 
-    if version.parse(str(settings_dict['version'])) > version.parse('1'):
+    if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('1'):
         provider_data = config_dict.get('cloud_provider')
         if provider_data and provider_data['name'] == 'azure':
             ctx.run('az acr run'
@@ -461,7 +461,7 @@ def cloudbuild_initial(ctx, config, tag):
     set_project(ctx, config)
     image_name = config_dict['docker_image'].split(':')[0]
 
-    if version.parse(str(settings_dict['version'])) > version.parse('1'):
+    if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('1'):
         provider_data = config_dict.get('cloud_provider')
         if provider_data and provider_data['name'] == 'azure':
             ctx.run('az acr run'
@@ -517,28 +517,4 @@ def get_settings():
 
     return settings_dict
 
-
-def confirm(prompt='Continue?\n', failure_prompt='User cancelled task'):
-    '''
-    Prompt the user to continue. Repeat on unknown response. Raise
-    ParseError on negative response
-    '''
-    response = input(prompt)
-    response_bool = False
-
-    try:
-        response_bool = strtobool(response)
-    except ValueError:
-        print('Confirm with y, yes, t, true, on or 1; '
-              'cancel with n, no, f, false, off or 0.')
-        return confirm(prompt, failure_prompt)
-
-    if not response_bool:
-        raise ParseError(failure_prompt)
-
-
-# Exceptions
-############
-class ReleaseError(BaseException):
-    pass
 
