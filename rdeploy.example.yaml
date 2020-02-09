@@ -16,7 +16,7 @@ configs:
     helm_chart_version: 0.1.38
   staging:
     project_name: example
-    docker_image: example.azurecr.io/luuun-website
+    docker_image: example.azurecr.io/example
     cloud_provider:
       name: azure
       subscription_id: 57800aa9-e115-4ede-9b70-0e1ce97294f6
