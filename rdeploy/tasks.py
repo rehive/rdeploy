@@ -12,7 +12,6 @@ from invoke.exceptions import ParseError
 from rdeploy.exceptions import ReleaseError
 from rdeploy.utils import get_settings, confirm
 
-
 # Cluster Activation:
 #####################
 @task
@@ -285,21 +284,36 @@ def install(ctx, config):
     config_dict = settings_dict['configs'][config]
     set_context(ctx, config)
 
+    helm_bin = config_dict.get('helm_bin', 'helm')
+
     install_flag = ''
-    if str(config_dict.get('helm_version')) != '3':
+
+    if config_dict.get('helm_version') and version.parse(str(config_dict['helm_version'])) > '2':
         install_flag = " --name"
 
-    ctx.run('helm repo add rehive https://rehive.github.io/charts', echo=True)
-    ctx.run('helm install{helm_install_flag} {project_name} '
+    ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin), echo=True)
+    ctx.run('{helm_bin} install{helm_install_flag} {project_name} '
             '--values {helm_values_path} '
             '--version {helm_chart_version} {helm_chart}'
-            .format(project_name=config_dict['project_name'],
+            .format(helm_bin=helm_bin,
+                    project_name=config_dict['project_name'],
                     helm_install_flag=install_flag,
                     helm_values_path=config_dict['helm_values_path'],
                     helm_chart=config_dict['helm_chart'],
                     helm_chart_version=config_dict['helm_chart_version']),
             echo=True)
 
+@task
+def helm(ctx, config, command):
+    settings_dict = get_settings()
+    config_dict = settings_dict['configs'][config]
+    set_context(ctx, config)
+
+    helm_bin = config_dict.get('helm_bin', 'helm')
+
+    ctx.run('{helm_bin} {command}'.format(helm_bin=helm_bin,
+                                          command=command),
+            echo=True)
 
 @task
 def upgrade(ctx, config, version):
@@ -311,11 +325,14 @@ def upgrade(ctx, config, version):
     config_dict = settings_dict['configs'][config]
     set_context(ctx, config)
 
-    ctx.run('helm upgrade {project_name} '
+    helm_bin = config_dict.get('helm_bin', 'helm')
+
+    ctx.run('{helm_bin} upgrade {project_name} '
             '--values {helm_values_path} '
             '--set image.tag={version} '
             '--version {helm_chart_version} {helm_chart}'
-            .format(project_name=config_dict['project_name'],
+            .format(helm_bin=helm_bin,
+                    project_name=config_dict['project_name'],
                     helm_chart=config_dict['helm_chart'],
                     helm_values_path=config_dict['helm_values_path'],
                     version=version,
