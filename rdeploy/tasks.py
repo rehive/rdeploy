@@ -2,6 +2,10 @@ import json
 import os
 import re
 import semver
+import sys
+import tarfile
+import zipfile
+import urllib.request
 
 from invoke import task
 import semver
@@ -11,8 +15,7 @@ import yaml
 from packaging import version
 from invoke.exceptions import ParseError
 from rdeploy.exceptions import ReleaseError
-from rdeploy.utils import get_settings, confirm
-
+from rdeploy.utils import get_settings, confirm, get_helm_bin
 
 # Cluster Activation:
 #####################
@@ -79,7 +82,7 @@ def set_cluster(ctx, config):
                 echo=True)
 
 
-@task
+@task(aliases=['set-context'])
 def set_context(ctx, config):
     """Sets active project, cluster and namespace"""
     settings_dict = get_settings()
@@ -94,7 +97,7 @@ def set_context(ctx, config):
 
 # Versioning Helpers
 ####################
-@task
+@task(aliases=['next-version'])
 def next_version(ctx, bump):
     """
     Returns incremented version number by looking at git tags
@@ -118,7 +121,7 @@ def next_version(ctx, bump):
     return incremented
 
 
-@task
+@task(aliases=['latest-version'])
 def latest_version(ctx):
     """Checks the git tags and returns the current latest version"""
     ctx.run('git fetch --tags')
@@ -140,7 +143,7 @@ def latest_version(ctx):
 
 # Kubernetes and GCloud Commands
 ################################
-@task
+@task(aliases=['create-namespace'])
 def create_namespace(ctx, config):
     """
     Updates kubernetes deployment to use specified version
@@ -155,7 +158,7 @@ def create_namespace(ctx, config):
             echo=True)
 
 
-@task
+@task(aliases=['upload-secrets'])
 def upload_secrets(ctx, config, env_file):
     """
     Updates kubernetes deployment to use specified version
@@ -175,7 +178,7 @@ def upload_secrets(ctx, config, env_file):
                     env_file=env_file))
 
 
-@task
+@task(aliases=['create-volume'])
 def create_volume(ctx, name,
                   zone='europe-west1-c',
                   size='100',
@@ -185,7 +188,7 @@ def create_volume(ctx, name,
             .format(name=name, size=size, zone=zone, type=type))
 
 
-@task
+@task(aliases=['upload-static'])
 def upload_static(ctx, config, bucket_name):
     """Upload static files to gcloud bucket"""
     set_project(ctx, config)
@@ -195,7 +198,7 @@ def upload_static(ctx, config, bucket_name):
             .format(bucket_name=bucket_name), echo=False)
 
 
-@task
+@task(aliases=['create-bucket'])
 def create_bucket(ctx, config, bucket_name):
     """Creates gcloud bucket for static files"""
     set_project(ctx, config)
@@ -207,7 +210,7 @@ def create_bucket(ctx, config, bucket_name):
 
 
 
-@task
+@task(aliases=['create-public-bucket'])
 def create_public_bucket(ctx, config, bucket_name):
     """Creates gcloud bucket for static files"""
     set_project(ctx, config)
@@ -217,7 +220,7 @@ def create_public_bucket(ctx, config, bucket_name):
             .format(bucket_name=bucket_name))
 
 
-@task
+@task(aliases=['template-install'])
 def template_install(ctx, config):
     """
     Installs kubernetes deployment from a helm template
@@ -277,6 +280,7 @@ def template_install(ctx, config):
                     namespace=config_dict['namespace']),
             echo=True)
 
+
 @task
 def install(ctx, config):
     """
@@ -286,15 +290,19 @@ def install(ctx, config):
     config_dict = settings_dict['configs'][config]
     set_context(ctx, config)
 
+    helm_bin = get_helm_bin(config_dict)
+
     install_flag = ''
-    if str(config_dict.get('helm_version')) != '3':
+
+    if config_dict.get('helm_version') and version.parse(str(config_dict['helm_version'])) < version.parse('2'):
         install_flag = " --name"
 
-    ctx.run('helm repo add rehive https://rehive.github.io/charts', echo=True)
-    ctx.run('helm install{helm_install_flag} {project_name} '
+    ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin=helm_bin), echo=True)
+    ctx.run('{helm_bin} install{helm_install_flag} {project_name} '
             '--values {helm_values_path} '
             '--version {helm_chart_version} {helm_chart}'
-            .format(project_name=config_dict['project_name'],
+            .format(helm_bin=helm_bin,
+                    project_name=config_dict['project_name'],
                     helm_install_flag=install_flag,
                     helm_values_path=config_dict['helm_values_path'],
                     helm_chart=config_dict['helm_chart'],
@@ -312,18 +320,75 @@ def upgrade(ctx, config, version):
     config_dict = settings_dict['configs'][config]
     set_context(ctx, config)
 
-    ctx.run('helm upgrade {project_name} '
+    helm_bin = get_helm_bin(config_dict)
+
+    ctx.run('{helm_bin} upgrade {project_name} '
             '--values {helm_values_path} '
             '--set image.tag={version} '
             '--version {helm_chart_version} {helm_chart}'
-            .format(project_name=config_dict['project_name'],
+            .format(helm_bin=helm_bin,
+                    project_name=config_dict['project_name'],
                     helm_chart=config_dict['helm_chart'],
                     helm_values_path=config_dict['helm_values_path'],
                     version=version,
                     helm_chart_version=config_dict['helm_chart_version']),
             echo=True)
 
+
 @task
+def helm(ctx, config, command):
+    settings_dict = get_settings()
+    config_dict = settings_dict['configs'][config]
+    set_context(ctx, config)
+
+    helm_bin = get_helm_bin(config_dict)
+
+    ctx.run('{helm_bin} {command}'.format(helm_bin=helm_bin,
+                                          command=command),
+            echo=True)
+
+
+@task(aliases=['helm-setup'])
+def helm_setup(ctx, config):
+    settings_dict = get_settings()
+    config_dict = settings_dict['configs'][config]
+
+    helm_version = config_dict.get('helm_version')
+    if not helm_version:
+        print('Please add the helm_version config to rdeploy.yaml.')
+        return
+
+    if config_dict.get('use_system_helm', True):
+        print('Please add the following config to rdeploy.yaml:\n'
+              'use_system_helm: false')
+        return
+
+    if sys.platform == 'linux' or sys.platform == 'linux2':
+        os_string = 'linux-amd64'
+        archive_tool = tarfile
+    elif sys.platform == 'darwin':
+        os_string = 'darwin-amd64'
+        archive_tool = tarfile
+    elif sys.platform == 'win32':
+        os_string = 'windows-amd64'
+        archive_tool = zipfile   
+    
+    url = 'https://get.helm.sh/helm-v{version}-{os_string}.tar.gz'.format(version=helm_version,
+                                                                          os_string=os_string)
+    file_tmp = urllib.request.urlretrieve(url, filename=None)[0]
+    tar = archive_tool.open(file_tmp)
+    tar.extractall('./opt/helm-v{version}'.format(version=helm_version))
+
+    helm_bin = get_helm_bin(config_dict)
+    ctx.run('{helm_bin} repo add stable https://kubernetes-charts.storage.googleapis.com'.format(helm_bin=helm_bin), echo=True)
+    ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin=helm_bin), echo=True)
+
+    print('Successfully installed helm to opt/helm-v{version}/{os_string}/ \n'
+          'Please make sure this directory has been added to .gitignore.'. format(version=helm_version,
+                                                                                  os_string=os_string))
+
+
+@task(aliases=['live-image'])
 def live_image(ctx, config):
     """Displays the current docker image and version deployed"""
     settings_dict = get_settings()
@@ -338,8 +403,8 @@ def live_image(ctx, config):
     print(image)
 
 
-@task
-def bash(ctx, config):
+@task(aliases=['bash'])
+def shell(ctx, config):
     """Exec into the management container"""
     set_context(ctx, config)
     settings_dict = get_settings()
@@ -371,7 +436,7 @@ def compose(ctx, cmd, tag):
 
 # Build commands
 ################
-@task
+@task(aliases=['git-release'])
 def git_release(ctx, version_bump, force=False):
     """
     Bump version, push git tag
@@ -451,7 +516,7 @@ def cloudbuild(ctx, config, tag):
             echo=True)
         
 
-@task
+@task(aliases=['cloudbuild-initial'])
 def cloudbuild_initial(ctx, config, tag):
     """
     Build project's docker image using google cloud builder and pushes to remote repo
@@ -494,27 +559,6 @@ def cloudbuild_initial(ctx, config, tag):
                 echo=True)
 
 
-# Utility functions
-###################
-def get_path():
-    file_path = os.path.dirname(os.path.realpath(__file__))
-    root_path = os.path.dirname(os.path.dirname(file_path))
-    return root_path
 
-
-def format_yaml(template, config):
-    """Replace in ${ENV_VAR} in template with value"""
-    formatted = template
-    for k, v in config.items():
-        formatted = formatted.replace('${%s}' % k, v)
-    return formatted
-
-
-def get_settings():
-    """Import project settings"""
-    with open('rdeploy.yaml', 'r') as stream:
-        settings_dict = yaml.load(stream, Loader=yaml.FullLoader)
-
-    return settings_dict
 
 

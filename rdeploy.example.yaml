@@ -11,9 +11,10 @@ configs:
       kube_cluster: example
     namespace: example
     helm_values_path: ./etc/helm/production/values.yaml
-    helm_version: 3
     helm_chart: rehive/rehive-service
     helm_chart_version: 0.1.38
+    helm_version: 3.0.3
+    use_system_helm: false
   staging:
     project_name: example
     docker_image: example.azurecr.io/example
@@ -26,6 +27,7 @@ configs:
       container_registry: example
     namespace: example
     helm_values_path: ./etc/helm/production/values.yaml
-    helm_version: 3
     helm_chart: rehive/rehive-service
     helm_chart_version: 0.1.38
+    helm_version: 3.0.3
+    use_system_helm: false
