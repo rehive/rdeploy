@@ -1,4 +1,11 @@
 ----
+Version 0.0.21, Mon 10 Feb 2019
+===============================
+- New rdeploy.yaml format, added rdeploy.example.yaml.
+- Add support for Azure in the set_context, and cloudbuild commands. Azure details to be provided in the `cloud_provider` field in rdeploy.yaml. 
+- Add support for helm 3 in the `install` and `upgrade` commands.
+- Add helm_setup command which installs a specific helm version in a local opt directory. This can be enabled by specifying `use_system_helm: false` and `helm_version` in rdeploy.yaml.
+- Added aliases for all commands with underscores. I.e. `rdeploy set-context` is now equivalent to `rdeploy set_context`
 
 Version 0.0.18, Fri 13 Sep 2019
 ===============================
