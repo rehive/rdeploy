@@ -4,6 +4,7 @@ try:
     from yaml import CLoader as Loader
 except ImportError:
     from yaml import Loader
+from sys import platform
 
 
 from distutils.util import strtobool
@@ -48,3 +49,20 @@ def confirm(prompt='Continue?\n', failure_prompt='User cancelled task'):
 
     if not response_bool:
         raise ParseError(failure_prompt)
+
+def get_helm_bin(config_dict: dict) -> str:
+    if config_dict.get('use_system_helm', True):
+        helm_bin = 'helm'
+    else:
+        helm_version = config_dict['helm_version']
+        if platform == 'linux' or platform == 'linux2':
+            folder = 'linux-amd64'
+            helm_bin = 'opt/helm-v{version}/{folder}/helm'.format(version=helm_version, folder=folder)
+        elif platform == 'darwin':
+            folder = 'darwin-amd64'
+            helm_bin = 'opt/helm-v{version}/{folder}/helm'.format(version=helm_version, folder=folder)
+        elif platform == 'win32':
+            folder = 'windows-amd64'
+            helm_bin = 'opt/helm-v{version}/{folder}/helm.exe'.format(version=helm_version, folder=folder)
+    
+    return helm_bin
