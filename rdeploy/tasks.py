@@ -294,7 +294,7 @@ def install(ctx, config):
 
     install_flag = ''
 
-    if config_dict.get('helm_version') and version.parse(str(config_dict['helm_version'])) >= version.parse('3'):
+    if config_dict.get('helm_version') and version.parse(str(config_dict['helm_version'])) <= version.parse('3'):
         install_flag = " --name"
 
     ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin=helm_bin), echo=True)

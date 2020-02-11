@@ -1,5 +1,5 @@
 ----
-Version 0.0.23, Tue 11 Feb 2019
+Version 0.0.24, Tue 11 Feb 2019
 ===============================
 - Fix bug in helm install command version parsing.
 
