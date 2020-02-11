@@ -1,5 +1,9 @@
 ----
-Version 0.0.21, Mon 10 Feb 2019
+Version 0.0.23, Tue 11 Feb 2019
+===============================
+- Fix bug in helm install command version parsing.
+
+Version 0.0.22, Mon 10 Feb 2019
 ===============================
 - New rdeploy.yaml format, added rdeploy.example.yaml.
 - Added support for Azure in the set_context, and cloudbuild commands. Azure details to be provided in the `cloud_provider` field in rdeploy.yaml. 
