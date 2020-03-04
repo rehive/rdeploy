@@ -6,6 +6,7 @@ import sys
 import tarfile
 import zipfile
 import urllib.request
+import io
 
 from invoke import task
 import semver
@@ -15,7 +16,7 @@ import yaml
 from packaging import version
 from invoke.exceptions import ParseError
 from rdeploy.exceptions import ReleaseError
-from rdeploy.utils import get_settings, confirm, get_helm_bin
+from rdeploy.utils import get_settings, confirm, get_helm_bin, yaml_decode_data_fields
 
 # Cluster Activation:
 #####################
@@ -65,7 +66,7 @@ def set_cluster(ctx, config):
                             zone_or_region_param=zone_or_region_param),
                     echo=True)
 
-    
+
     else:
         if config_dict.get('cloud_zone'):
             zone_or_region_param = '--zone {}'.format(config_dict['cloud_zone'])
@@ -176,6 +177,17 @@ def upload_secrets(ctx, config, env_file):
             ' --from-env-file {env_file}'
             .format(project_name=config_dict['project_name'],
                     env_file=env_file))
+
+
+@task(aliases=['decode-secret'])
+def decode_secret(ctx, config, secret):
+    """
+    Updates kubernetes deployment to use specified version
+    """
+    set_context(ctx, config)
+    o = io.StringIO()
+    ctx.run('kubectl get secret {secret} -o yaml'.format(secret=secret),out_stream=o)
+    print(yaml_decode_data_fields(o.getvalue()))
 
 
 @task(aliases=['create-volume'])
@@ -371,8 +383,8 @@ def helm_setup(ctx, config):
         archive_tool = tarfile
     elif sys.platform == 'win32':
         os_string = 'windows-amd64'
-        archive_tool = zipfile   
-    
+        archive_tool = zipfile
+
     url = 'https://get.helm.sh/helm-v{version}-{os_string}.tar.gz'.format(version=helm_version,
                                                                           os_string=os_string)
     file_tmp = urllib.request.urlretrieve(url, filename=None)[0]
@@ -492,7 +504,7 @@ def cloudbuild(ctx, config, tag):
                 ' --set TAG_NAME={tag_name}'
                 ' .'
                 .format(container_registry=provider_data['container_registry'],
-                        image_name=image_name, 
+                        image_name=image_name,
                         tag_name=tag), echo=True)
         else:
             log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
@@ -504,7 +516,7 @@ def cloudbuild(ctx, config, tag):
                 .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
                 echo=True)
 
-    
+
     else:
         log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
         project=config_dict['cloud_project'], image=image_name, tag_name=tag)
@@ -514,7 +526,7 @@ def cloudbuild(ctx, config, tag):
             ' --gcs-log-dir {log_dir}'
             .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
             echo=True)
-        
+
 
 @task(aliases=['cloudbuild-initial'])
 def cloudbuild_initial(ctx, config, tag):
@@ -536,7 +548,7 @@ def cloudbuild_initial(ctx, config, tag):
                 ' --set TAG_NAME={tag_name}'
                 ' .'
                 .format(container_registry=provider_data['container_registry'],
-                        image_name=image_name, 
+                        image_name=image_name,
                         tag_name=tag), echo=True)
         else:
             log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
@@ -547,7 +559,7 @@ def cloudbuild_initial(ctx, config, tag):
                     ' --gcs-log-dir {log_dir}'
                     .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
                     echo=True)
-    
+
     else:
         log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
         project=config_dict['cloud_project'], image=image_name, tag_name=tag)
@@ -557,8 +569,3 @@ def cloudbuild_initial(ctx, config, tag):
                 ' --gcs-log-dir {log_dir}'
                 .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
                 echo=True)
-
-
-
-
-
