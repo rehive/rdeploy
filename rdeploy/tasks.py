@@ -404,10 +404,8 @@ def shell(ctx, config):
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    ctx.run('kubectl exec -i -t {project_name}-management -- '
-            '/bin/sh -c "/bin/bash || /bin/sh"'
-            .format(project_name=config_dict['project_name']),
-            pty=True, warn=False, echo=True)
+    management_cmd = build_management_cmd(config_dict, "/bin/bash")
+    ctx.run(management_cmd, pty=True, warn=False, echo=True)
 
 
 @task
@@ -416,7 +414,7 @@ def manage(ctx, config, cmd):
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    management_cmd = build_management_cmd(config_dict, cmd)
+    management_cmd = build_management_cmd(config_dict, f'python manage.py {cmd}')
     ctx.run(management_cmd, pty=True, warn=False, echo=True)
 
 
