@@ -1,12 +1,21 @@
 ----
-Version 0.0.24, Tue 11 Feb 2019
+Version 0.0.25, Wed 25 Mar 2020
+===============================
+
+- Migrated to use kubectl run command. Currently supporting the
+  ExtensionsV1beta1/deployment
+
+a8a490a updated working management pod spec and command definition for both manage and shell commands
+78d207c Created a command for building the management command
+
+Version 0.0.24, Tue 11 Feb 2020
 ===============================
 - Fix bug in helm install command version parsing.
 
-Version 0.0.22, Mon 10 Feb 2019
+Version 0.0.22, Mon 10 Feb 2020
 ===============================
 - New rdeploy.yaml format, added rdeploy.example.yaml.
-- Added support for Azure in the set_context, and cloudbuild commands. Azure details to be provided in the `cloud_provider` field in rdeploy.yaml. 
+- Added support for Azure in the set_context, and cloudbuild commands. Azure details to be provided in the `cloud_provider` field in rdeploy.yaml.
 - Added support for helm 3 in the `install` and `upgrade` commands.
 - Added helm_setup command which installs a specific helm version in a local opt directory. This can be enabled by specifying `use_system_helm: false` and `helm_version` in rdeploy.yaml.
 - Added a new `helm` command.

@@ -1,7 +1,3 @@
-import json
-import os
-import re
-import semver
 import sys
 import tarfile
 import zipfile
@@ -12,11 +8,11 @@ from invoke import task
 import semver
 import json
 import re
-import yaml
+
 from packaging import version
-from invoke.exceptions import ParseError
 from rdeploy.exceptions import ReleaseError
-from rdeploy.utils import get_settings, confirm, get_helm_bin, yaml_decode_data_fields
+
+from rdeploy.utils import get_settings, confirm, get_helm_bin, yaml_decode_data_fields, build_management_cmd
 
 # Cluster Activation:
 #####################
@@ -421,10 +417,8 @@ def shell(ctx, config):
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    ctx.run('kubectl exec -i -t {project_name}-management -- '
-            '/bin/sh -c "/bin/bash || /bin/sh"'
-            .format(project_name=config_dict['project_name']),
-            pty=True, warn=False, echo=True)
+    management_cmd = build_management_cmd(config_dict, "/bin/bash")
+    ctx.run(management_cmd, pty=True, warn=False, echo=True)
 
 
 @task
@@ -433,10 +427,8 @@ def manage(ctx, config, cmd):
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    ctx.run('kubectl exec -i -t {project_name}-management'
-            ' -- python  manage.py {cmd}'
-            .format(project_name=config_dict['project_name'], cmd=cmd),
-            pty=True, echo=True)
+    management_cmd = build_management_cmd(config_dict, f'python manage.py {cmd}')
+    ctx.run(management_cmd, pty=True, warn=False, echo=True)
 
 
 @task

@@ -14,6 +14,15 @@ here = path.abspath(path.dirname(__file__))
 with open(path.join(here, 'README.rst'), encoding='utf-8') as f:
     long_description = f.read()
 
+
+def parse_requirements(filename):
+    """
+    Load requirements from a pip requirements file
+    """
+    lineiter = (line.strip() for line in open(filename))
+    return [line for line in lineiter if line and not line.startswith("#")]
+
+
 # allow setup.py to be run from any path
 chdir(path.normpath(path.join(path.abspath(__file__), pardir)))
 
@@ -96,26 +105,14 @@ setup(
     # your project is installed. For an analysis of "install_requires" vs pip's
     # requirements files see:
     # https://packaging.python.org/en/latest/requirements.html
-    install_requires=[
-        'invoke<=0.18.1,>=0.15',
-        'pyyaml',
-        'python-dotenv>=0.5.1',
-        'semver',
-        'packaging',
-    ],
+    install_requires=parse_requirements(path.join(here, 'requirements.txt')),
 
     # List additional groups of dependencies here (e.g. development
     # dependencies). You can install these using the following syntax,
     # for example:
     # $ pip install -e .[dev,test]
     extras_require={
-        'dev': [
-            'invoke<=0.18.1,>=0.15',
-            'pyyaml',
-            'python-dotenv>=0.5.1',
-            'semver',
-            'packaging',
-        ],
+        'dev': parse_requirements(path.join(here, 'requirements.txt')),
         'test': ['coverage'],
     },
 

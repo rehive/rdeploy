@@ -2,6 +2,7 @@ import os
 import yaml
 import json
 import base64
+
 try:
     from yaml import CLoader as Loader
 except ImportError:
@@ -11,6 +12,9 @@ from sys import platform
 
 from distutils.util import strtobool
 from invoke.exceptions import ParseError
+from json import dumps
+from .exceptions import ExecuteError
+
 
 def get_path():
     file_path = os.path.dirname(os.path.realpath(__file__))
@@ -30,7 +34,6 @@ def get_settings(path="rdeploy.yaml"):
     """Import project settings"""
     with open(path, 'r') as stream:
         settings_dict = yaml.load(stream, Loader=Loader)
-
     return settings_dict
 
 
@@ -52,6 +55,7 @@ def confirm(prompt='Continue?\n', failure_prompt='User cancelled task'):
     if not response_bool:
         raise ParseError(failure_prompt)
 
+
 def get_helm_bin(config_dict: dict) -> str:
     if config_dict.get('use_system_helm', True):
         helm_bin = 'helm'
@@ -59,10 +63,10 @@ def get_helm_bin(config_dict: dict) -> str:
         helm_version = config_dict['helm_version']
         if platform == 'linux' or platform == 'linux2':
             folder = 'linux-amd64'
-            helm_bin = 'opt/helm-v{version}/{folder}/helm'.format(version=helm_version, folder=folder)
+            helm_bin = f'opt/helm-v{helm_version}/{folder}/helm'
         elif platform == 'darwin':
             folder = 'darwin-amd64'
-            helm_bin = 'opt/helm-v{version}/{folder}/helm'.format(version=helm_version, folder=folder)
+            helm_bin = f'opt/helm-v{helm_version}/{folder}/helm'
         elif platform == 'win32':
             folder = 'windows-amd64'
             helm_bin = 'opt/helm-v{version}/{folder}/helm.exe'.format(version=helm_version, folder=folder)
@@ -91,3 +95,59 @@ def decode_data_value(encoded_value):
         return json.loads(decoded_value)
     except ValueError:
         return decoded_value
+
+
+def build_management_cmd(config_dict: dict, cmd: str = "") -> str:
+    from kubernetes import client, config
+    from kubernetes.client.models import V1Container
+    from kubernetes.client.rest import ApiException
+
+    config.load_kube_config()
+    extensions_v1_beta1 = client.ExtensionsV1beta1Api()
+
+    try:
+        deployment = extensions_v1_beta1.read_namespaced_deployment(
+            config_dict['project_name'],
+            config_dict['namespace'],
+            pretty=False
+        )
+    except ApiException as e:
+       raise ExecuteError('ExtensionsV1 beta1 deployment not installed')
+
+    container_v1 = deployment.spec.template.spec.containers[0]
+    container = V1Container(env_from=container_v1.env_from, env=container_v1.env,
+                            image=container_v1.image, command=cmd.split(), args=[],
+                            name="management", stdin=True, tty=True)
+
+    def create_dict_json_attributes(obj):
+        if not hasattr(obj, 'to_dict'):
+            return obj
+        obj_dict = obj.to_dict()
+        ret = dict()
+        for key, value in obj_dict.items():
+            attrib = getattr(obj, key)
+            if attrib is None:
+                # Don't patch with null values
+                continue
+
+            if isinstance(attrib, str) \
+                    or isinstance(attrib, int) \
+                    or isinstance(attrib, float) \
+                    or isinstance(attrib, bool):
+                ret[obj.attribute_map[key]] = value
+            elif isinstance(attrib, list):
+                ret[obj.attribute_map[key]] = [create_dict_json_attributes(a) for a in attrib]
+            else:
+                ret[obj.attribute_map[key]] = create_dict_json_attributes(attrib)
+        return ret
+
+    container_dict = create_dict_json_attributes(container)
+    overrides = dict(spec=dict(containers=[container_dict]))
+    overrides_str = dumps(overrides)
+
+    return f'kubectl run management --rm --tty=true --stdin=true '\
+        f'--image={container.image} '\
+        f'--generator=run-pod/v1 '\
+        f'--overrides=\'{overrides_str}\' '\
+        f'--output yaml --command -- \'\''
+
