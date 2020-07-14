@@ -69,7 +69,7 @@ def get_helm_bin(config_dict: dict) -> str:
             helm_bin = f'opt/helm-v{helm_version}/{folder}/helm'
         elif platform == 'win32':
             folder = 'windows-amd64'
-            helm_bin = 'opt/helm-v{version}/{folder}/helm.exe'.format(version=helm_version, folder=folder)
+            helm_bin = f'opt/helm-v{helm_version}/{folder}/helm.exe'
 
     return helm_bin
 

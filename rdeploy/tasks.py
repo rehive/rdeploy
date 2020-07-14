@@ -178,7 +178,7 @@ def upload_secrets(ctx, config, env_file):
 @task(aliases=['decode-secret'])
 def decode_secret(ctx, config, secret):
     """
-    Updates kubernetes deployment to use specified version
+    Prints the decoded values of a kubernetes secret
     """
     set_context(ctx, config)
     o = io.StringIO()
