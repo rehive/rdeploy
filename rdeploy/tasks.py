@@ -2,6 +2,7 @@ import sys
 import tarfile
 import zipfile
 import urllib.request
+import io
 
 from invoke import task
 import semver
@@ -10,7 +11,8 @@ import re
 
 from packaging import version
 from rdeploy.exceptions import ReleaseError
-from rdeploy.utils import get_settings, confirm, get_helm_bin, build_management_cmd
+
+from rdeploy.utils import get_settings, confirm, get_helm_bin, yaml_decode_data_fields, build_management_cmd
 
 # Cluster Activation:
 #####################
@@ -171,6 +173,17 @@ def upload_secrets(ctx, config, env_file):
             ' --from-env-file {env_file}'
             .format(project_name=config_dict['project_name'],
                     env_file=env_file))
+
+
+@task(aliases=['decode-secret'])
+def decode_secret(ctx, config, secret):
+    """
+    Updates kubernetes deployment to use specified version
+    """
+    set_context(ctx, config)
+    o = io.StringIO()
+    ctx.run('kubectl get secret {secret} -o yaml'.format(secret=secret),out_stream=o)
+    print(yaml_decode_data_fields(o.getvalue()))
 
 
 @task(aliases=['create-volume'])

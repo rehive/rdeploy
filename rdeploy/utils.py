@@ -1,5 +1,7 @@
 import os
 import yaml
+import json
+import base64
 
 try:
     from yaml import CLoader as Loader
@@ -67,9 +69,32 @@ def get_helm_bin(config_dict: dict) -> str:
             helm_bin = f'opt/helm-v{helm_version}/{folder}/helm'
         elif platform == 'win32':
             folder = 'windows-amd64'
-            helm_bin = f'opt/helm-v{helm_version}/{folder}/helm.exe'
+            helm_bin = 'opt/helm-v{version}/{folder}/helm.exe'.format(version=helm_version, folder=folder)
 
     return helm_bin
+
+def json_decode_data_fields(secret_json):
+    return json.dumps(decode_data_fields(json.loads(secret_json)), indent=2)
+
+
+def yaml_decode_data_fields(secret_yaml):
+    return yaml.safe_dump(decode_data_fields(yaml.safe_load(secret_yaml)), indent=2)
+
+
+def decode_data_fields(secret):
+    decoded_data = {}
+    for key, value in secret['data'].items():
+        decoded_data[key] = decode_data_value(value)
+    secret['data'] = decoded_data
+    return secret
+
+
+def decode_data_value(encoded_value):
+    decoded_value = base64.b64decode(encoded_value).decode()
+    try:
+        return json.loads(decoded_value)
+    except ValueError:
+        return decoded_value
 
 
 def build_management_cmd(config_dict: dict, cmd: str = "") -> str:
@@ -125,3 +150,4 @@ def build_management_cmd(config_dict: dict, cmd: str = "") -> str:
         f'--generator=run-pod/v1 '\
         f'--overrides=\'{overrides_str}\' '\
         f'--output yaml --command -- \'\''
+
