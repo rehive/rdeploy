@@ -103,10 +103,10 @@ def build_management_cmd(config_dict: dict, cmd: str = "") -> str:
     from kubernetes.client.rest import ApiException
 
     config.load_kube_config()
-    extensions_v1_beta1 = client.ExtensionsV1beta1Api()
+    app_v1_api = client.AppsV1Api()
 
     try:
-        deployment = extensions_v1_beta1.read_namespaced_deployment(
+        deployment = app_v1_api.read_namespaced_deployment(
             config_dict['project_name'],
             config_dict['namespace'],
             pretty=False
