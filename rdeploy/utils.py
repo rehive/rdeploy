@@ -98,10 +98,11 @@ def decode_data_value(encoded_value):
         return decoded_value
 
 
-def build_management_cmd(config_dict: dict, cmd: str = "") -> str:
+def build_management_cmd(config_dict: dict, cmd: str = "", tag: str = "") -> str:
     from kubernetes import client, config
     from kubernetes.client.models import V1Container
     from kubernetes.client.rest import ApiException
+    print(tag)
 
     config.load_kube_config()
     app_v1_api = client.AppsV1Api()
@@ -126,9 +127,17 @@ def build_management_cmd(config_dict: dict, cmd: str = "") -> str:
         print(f'image_pull_secrets does not exist and its ok, carrying on. Info: {e}')
         pass
 
-    container = V1Container(env_from=container_v1.env_from, env=container_v1.env,
-                            image=container_v1.image, command=cmd.split(), args=[],
-                            name="management", stdin=True, tty=True)
+    if tag:
+        image_tag = container_v1.image.rsplit(':',1)[0]
+        image_tag = f'{image_tag}:{tag}'
+        container = V1Container(env_from=container_v1.env_from, env=container_v1.env,
+                                image=image_tag, command=cmd.split(), args=[],
+                                name="management", stdin=True, tty=True)
+    else:
+        container = V1Container(env_from=container_v1.env_from, env=container_v1.env,
+                                image=container_v1.image, command=cmd.split(), args=[],
+                                name="management", stdin=True, tty=True)
+
 
     def create_dict_json_attributes(obj):
         if not hasattr(obj, 'to_dict'):
@@ -165,7 +174,5 @@ def build_management_cmd(config_dict: dict, cmd: str = "") -> str:
 
     return f'kubectl run management --rm --tty=true --stdin=true '\
         f'--image={container.image} '\
-        f'--generator=run-pod/v1 '\
         f'--overrides=\'{overrides_str}\' '\
         f'--output yaml --command -- \'\''
-
