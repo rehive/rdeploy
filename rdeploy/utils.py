@@ -3,6 +3,7 @@ import yaml
 import json
 import base64
 
+
 try:
     from yaml import CLoader as Loader
 except ImportError:
@@ -112,9 +113,19 @@ def build_management_cmd(config_dict: dict, cmd: str = "") -> str:
             pretty=False
         )
     except ApiException as e:
-       raise ExecuteError('ExtensionsV1 beta1 deployment not installed')
+       raise ExecuteError('AppsV1Api deployment not installed')
 
     container_v1 = deployment.spec.template.spec.containers[0]
+    image_pull_secrets = None
+
+    try:
+        image_pull_secrets = deployment.spec.template.spec.image_pull_secrets[0]
+    except ApiException as e:
+        raise ExecuteError('Exception when calling AppsV1Api->image_pull_secret \n')
+    except TypeError as e:
+        print(f'image_pull_secrets does not exist and its ok, carrying on. Info: {e}')
+        pass
+
     container = V1Container(env_from=container_v1.env_from, env=container_v1.env,
                             image=container_v1.image, command=cmd.split(), args=[],
                             name="management", stdin=True, tty=True)
@@ -141,8 +152,15 @@ def build_management_cmd(config_dict: dict, cmd: str = "") -> str:
                 ret[obj.attribute_map[key]] = create_dict_json_attributes(attrib)
         return ret
 
+    # Convert V1_k8s_object to dictionary
     container_dict = create_dict_json_attributes(container)
+    # Create dictionary
     overrides = dict(spec=dict(containers=[container_dict]))
+
+    if image_pull_secrets:
+        image_p_s_dict = create_dict_json_attributes(image_pull_secrets)
+        overrides["spec"]["imagePullSecrets"] = [image_p_s_dict]
+
     overrides_str = dumps(overrides)
 
     return f'kubectl run management --rm --tty=true --stdin=true '\
