@@ -1,4 +1,8 @@
 ----
+Version 0.0.30, Mon 4 Jan 2020
+===============================
+- Update helm stable repo url to new version.
+
 Version 0.0.26, Wed 14 Jul 2020
 ===============================
 - Add decode-secret command

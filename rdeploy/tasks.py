@@ -388,7 +388,7 @@ def helm_setup(ctx, config):
     tar.extractall('./opt/helm-v{version}'.format(version=helm_version))
 
     helm_bin = get_helm_bin(config_dict)
-    ctx.run('{helm_bin} repo add stable https://kubernetes-charts.storage.googleapis.com'.format(helm_bin=helm_bin), echo=True)
+    ctx.run('{helm_bin} repo add stable https://charts.helm.sh/stable'.format(helm_bin=helm_bin), echo=True)
     ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin=helm_bin), echo=True)
 
     print('Successfully installed helm to opt/helm-v{version}/{os_string}/ \n'
