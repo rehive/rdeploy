@@ -19,6 +19,7 @@ from rdeploy.utils import get_settings, confirm, get_helm_bin, yaml_decode_data_
 @task
 def set_project(ctx, config):
     """Sets the active gcloud project"""
+    print("Setting project")
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('1'):
@@ -84,12 +85,54 @@ def set_context(ctx, config):
     """Sets active project, cluster and namespace"""
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    set_project(ctx, config)
-    set_cluster(ctx, config)
-    ctx.run('kubectl config set-context $(kubectl config current-context)'
+    provider_data = config_dict.get('cloud_provider')
+
+    print(settings_dict)
+    if settings_dict.get('version') == '1':
+        print("haribol?")
+        set_project(ctx, config)
+        set_cluster(ctx, config)
+        ctx.run('kubectl config set-context $(kubectl config current-context)'
             ' --namespace={namespace}'
             .format(namespace=config_dict['namespace']),
             echo=True)
+    elif settings_dict.get('version') == '2':
+        print(provider_data)
+        print("---------------")
+        if provider_data.get('name') == 'gcp':
+            if provider_data.get('kube_cluster') == 'production':
+                if provider_data.get('project') == 'rehive-services':
+                    ctx.run('kubectl config use-context gke_rehive-services_europe-west1-c_production'
+                        ' --namespace={namespace}'
+                        .format(namespace=config_dict['namespace']),
+                        echo=True)
+                elif provider_data.get('project') == 'rehive-core':
+                    ctx.run('kubectl config use-context gke_rehive-core_europe-west1_ha-production'
+                        ' --namespace={namespace}'
+                        .format(namespace=config_dict['namespace']),
+                        echo=True)
+            elif provider_data.get('kube_cluster') == 'staging':
+                if provider_data.get('project') == 'rehive-services':
+                    ctx.run('kubectl config use-context gke_rehive-core_europe-west1_ha-staging'
+                        ' --namespace={namespace}'
+                        .format(namespace=config_dict['namespace']),
+                        echo=True)
+                elif provider_data.get('project') == 'rehive-core':
+                    ctx.run('kubectl config use-context gke_rehive-core_europe-west1_ha-staging'
+                        ' --namespace={namespace}'
+                        .format(namespace=config_dict['namespace']),
+                        echo=True)
+        elif provider_data.get('name') == 'azure':
+            if provider_data.get('kube_cluster') == 'rehive-services':
+                ctx.run('kubectl config use-context aks-westeurope-rehive-services'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
+            elif provider_data.get('kube_cluster') == 'rehive-services-staging':
+                ctx.run('kubectl config use-context aks-westeurope-rehive-services-staging'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
 
 
 # Versioning Helpers
