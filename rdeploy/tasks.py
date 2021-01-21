@@ -19,7 +19,6 @@ from rdeploy.utils import get_settings, confirm, get_helm_bin, yaml_decode_data_
 @task
 def set_project(ctx, config):
     """Sets the active gcloud project"""
-    print("Setting project")
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('1'):
