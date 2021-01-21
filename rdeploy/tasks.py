@@ -79,30 +79,80 @@ def set_cluster(ctx, config):
                         zone_or_region_param=zone_or_region_param),
                 echo=True)
 
+@task()
+def activate(ctx, config):
+    """Fetches and sets the project, cluster and namespace"""
+    settings_dict = get_settings()
+    config_dict = settings_dict['configs'][config]
+    set_project(ctx, config)
+    set_cluster(ctx, config)
+    ctx.run('kubectl config use-context $(kubectl config current-context)'
+            ' --namespace={namespace}'
+            .format(namespace=config_dict['namespace']),
+            echo=True)
 
 @task(aliases=['set-context'])
 def set_context(ctx, config):
-    """Sets active project, cluster and namespace"""
+    """Switch cluster and namespace"""
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     provider_data = config_dict.get('cloud_provider')
 
-    print(settings_dict)
-    if settings_dict.get('version') == '1':
-        print("haribol?")
-        set_project(ctx, config)
-        set_cluster(ctx, config)
-        ctx.run('kubectl config set-context $(kubectl config current-context)'
-            ' --namespace={namespace}'
-            .format(namespace=config_dict['namespace']),
-            echo=True)
-    elif settings_dict.get('version') == '2':
-        print(provider_data)
-        print("---------------")
+    if settings_dict.get('version') == '1' or settings_dict.get('version') == 1:
+        if config_dict.get('cloud_project') == 'rehive-services':
+            if config_dict.get('cluster') == 'production':
+                ctx.run('kubectl config use-context gke_rehive-services_europe-west1-c_production'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
+                ctx.run('kubectl config set-context --current'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
+            if config_dict.get('cluster') == 'staging':
+                ctx.run('kubectl config use-context gke_rehive-services_europe-west1-c_staging'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
+                ctx.run('kubectl config set-context --current'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
+            else:
+                sys.exit(f"Invalid cluster in rdeploy file: {config_dict.get('cluster')}")
+        elif config_dict.get('cloud_project') == 'rehive-core':
+            if config_dict.get('cluster') == 'production':
+                ctx.run('kubectl config ussetontext gke_rehive-core_europe-west1_ha-production'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
+                ctx.run('kubectl config set-context --current'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
+            if config_dict.get('cluster') == 'staging':
+                ctx.run('kubectl config use-context gke_rehive-core_europe-west1_ha-staging'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
+                ctx.run('kubectl config set-context --current'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
+            else:
+                sys.exit(f"Invalid kube_cluster in rdeploy file: {provider_data.get('kube_cluster')}")
+        else:
+            sys.exit(f"Invalid cloud_project in rdeploy file: {config_dict.get('cloud_project')}")
+
+    elif settings_dict.get('version') == '2' or settings_dict.get('version') == 2:
         if provider_data.get('name') == 'gcp':
-            if provider_data.get('kube_cluster') == 'production':
+            if provider_data.get('kube_cluster') == 'production' or provider_data.get('kube_cluster') == 'ha-production':
                 if provider_data.get('project') == 'rehive-services':
                     ctx.run('kubectl config use-context gke_rehive-services_europe-west1-c_production'
+                        ' --namespace={namespace}'
+                        .format(namespace=config_dict['namespace']),
+                        echo=True)
+                    ctx.run('kubectl config set-context --current'
                         ' --namespace={namespace}'
                         .format(namespace=config_dict['namespace']),
                         echo=True)
@@ -111,9 +161,17 @@ def set_context(ctx, config):
                         ' --namespace={namespace}'
                         .format(namespace=config_dict['namespace']),
                         echo=True)
-            elif provider_data.get('kube_cluster') == 'staging':
+                    ctx.run('kubectl config set-context --current'
+                        ' --namespace={namespace}'
+                        .format(namespace=config_dict['namespace']),
+                        echo=True)
+            elif provider_data.get('kube_cluster') == 'staging' or provider_data.get('kube_cluster') == 'ha-staging':
                 if provider_data.get('project') == 'rehive-services':
-                    ctx.run('kubectl config use-context gke_rehive-core_europe-west1_ha-staging'
+                    ctx.run('kubectl config use-context gke_rehive-services_europe-west1-c_staging'
+                        ' --namespace={namespace}'
+                        .format(namespace=config_dict['namespace']),
+                        echo=True)
+                    ctx.run('kubectl config set-context --current'
                         ' --namespace={namespace}'
                         .format(namespace=config_dict['namespace']),
                         echo=True)
@@ -122,9 +180,19 @@ def set_context(ctx, config):
                         ' --namespace={namespace}'
                         .format(namespace=config_dict['namespace']),
                         echo=True)
+                    ctx.run('kubectl config set-context --current'
+                        ' --namespace={namespace}'
+                        .format(namespace=config_dict['namespace']),
+                        echo=True)
+            else:
+                sys.exit(f"Invalid kube_cluster in rdeploy file: {provider_data.get('kube_cluster')}")
         elif provider_data.get('name') == 'azure':
             if provider_data.get('kube_cluster') == 'rehive-services':
                 ctx.run('kubectl config use-context aks-westeurope-rehive-services'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
+                ctx.run('kubectl config set-context --current'
                     ' --namespace={namespace}'
                     .format(namespace=config_dict['namespace']),
                     echo=True)
@@ -133,6 +201,17 @@ def set_context(ctx, config):
                     ' --namespace={namespace}'
                     .format(namespace=config_dict['namespace']),
                     echo=True)
+                ctx.run('kubectl config set-context --current'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
+            else:
+                sys.exit(f"Invalid kube_cluster in rdeploy file: {provider_data.get('kube_cluster')}")
+        else:
+            sys.exit(f"Invalid provider name in rdeploy file: {provider_data.get('name')}")
+    else:
+        sys.exit(f"Invalid rdeploy version in rdeploy file: {settings_dict.get('version')}")
+
 
 
 # Versioning Helpers
@@ -190,8 +269,7 @@ def create_namespace(ctx, config):
     """
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    set_project(ctx, config)
-    set_cluster(ctx, config)
+    set_context(ctx, config)
 
     ctx.run('kubectl create namespace {namespace}'
             .format(namespace=config_dict['namespace']),
