@@ -33,7 +33,6 @@ def set_project(ctx, config):
         ctx.run('gcloud config set project {project}'
                 .format(project=config_dict['cloud_project']), echo=True)
 
-
 @task
 def set_cluster(ctx, config):
     """Sets the active cluster"""
@@ -43,17 +42,20 @@ def set_cluster(ctx, config):
     if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('1'):
         provider_data = config_dict.get('cloud_provider')
         if provider_data and provider_data['name'] == 'azure':
-            ctx.run('az aks get-credentials -g {group} -n {cluster} --context aks-{region}-{cluster} --overwrite-existing'
+            ctx.run('az aks get-credentials -g {group} -n {cluster} --context aks-{region}-{cluster} --context {name}_{cluster}_{region}  --overwrite-existing'
                     .format(group=provider_data['resource_group'],
                             cluster=provider_data['kube_cluster'],
                             region=provider_data['region'],
+                            name=provider_data['name']
                             ), echo=True)
 
         if provider_data and provider_data['name'] == 'gcp':
             if provider_data.get('zone'):
                 zone_or_region_param = '--zone {}'.format(provider_data['zone'])
+                zone = provider_data['zone']
             elif provider_data.get('region'):
                 zone_or_region_param = '--region {}'.format(provider_data['region'])
+                zone = provider_data['region']
 
             ctx.run('gcloud container clusters get-credentials {cluster}'
                     ' --project {project} {zone_or_region_param}'
@@ -62,14 +64,25 @@ def set_cluster(ctx, config):
                             zone_or_region_param=zone_or_region_param),
                     echo=True)
 
-
+            ctx.run('kubectl config rename-context gke_{project}_{zone}_{cluster}'
+                    ' {name}_{project}_{cluster}_{zone}'
+                    .format(cluster=provider_data['kube_cluster'],
+                            project=provider_data['project'],
+                            name=provider_data['name'],
+                            zone=zone),
+                    echo=True)
+        else:
+            sys.exit(f"Unsupported provider: {provider_data['name']}")
     else:
         if config_dict.get('cloud_zone'):
             zone_or_region_param = '--zone {}'.format(config_dict['cloud_zone'])
+            zone = config_dict['cloud_zone']
         elif config_dict.get('cloud_region'):
             zone_or_region_param = '--region {}'.format(config_dict['cloud_region'])
+            zone = config_dict['cloud_region']
         else:
             zone_or_region_param = '--zone europe-west1-c'
+            zone = 'europe-west1-c'
 
         ctx.run('gcloud container clusters get-credentials {cluster}'
                 ' --project {project} {zone_or_region_param}'
@@ -78,18 +91,78 @@ def set_cluster(ctx, config):
                         zone_or_region_param=zone_or_region_param),
                 echo=True)
 
+        ctx.run('kubectl config rename-context gke_{project}_{zone}_{cluster}'
+                ' gcp_{project}_{cluster}_{zone}'
+                .format(cluster=config_dict['cluster'],
+                        project=config_dict['cloud_project'],
+                        zone=zone),
+                echo=True)
 
-@task(aliases=['set-context'])
-def set_context(ctx, config):
-    """Sets active project, cluster and namespace"""
+
+@task()
+def activate(ctx, config):
+    """Fetches and sets the project, cluster and namespace"""
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     set_project(ctx, config)
     set_cluster(ctx, config)
-    ctx.run('kubectl config set-context $(kubectl config current-context)'
+    ctx.run('kubectl config use-context $(kubectl config current-context)'
             ' --namespace={namespace}'
             .format(namespace=config_dict['namespace']),
             echo=True)
+
+
+@task(aliases=['set-context'])
+def set_context(ctx, config):
+    """Switch cluster and namespace"""
+    settings_dict = get_settings()
+    config_dict = settings_dict['configs'][config]
+    provider_data = config_dict.get('cloud_provider')
+
+    if settings_dict.get('version') == '1' or settings_dict.get('version') == 1:
+        ctx.run('kubectl config use-context gcp_{cloud_project}_{cluster}_europe-west1-c'
+            ' --namespace={namespace}'
+            .format(namespace=config_dict['namespace'],
+                    cloud_project=config_dict['cloud_project'],
+                    cluster=config_dict['cluster']),
+            echo=True)
+        ctx.run('kubectl config set-context --current'
+            ' --namespace={namespace}'
+            .format(namespace=config_dict['namespace']),
+            echo=True)
+
+
+    elif settings_dict.get('version') == '2' or settings_dict.get('version') == 2:
+        if provider_data.get('name') == 'gcp':
+            ctx.run('kubectl config use-context {name}_{project}_{cluster}_{zone}'
+                ' --namespace={namespace}'
+                .format(namespace=config_dict['namespace'],
+                        project=provider_data['project'],
+                        cluster=provider_data['kube_cluster'],
+                        name=provider_data['name'],
+                        zone=provider_data['zone']),
+                echo=True)
+            ctx.run('kubectl config set-context --current'
+                ' --namespace={namespace}'
+                .format(namespace=config_dict['namespace']),
+                echo=True)
+
+        elif provider_data.get('name') == 'azure':
+            ctx.run('kubectl config use-context {name}_{cluster}_{region}'
+                ' --namespace={namespace}'
+                .format(namespace=config_dict['namespace'],
+                        cluster=provider_data['kube_cluster'],
+                        name=provider_data['name'],
+                        region=provider_data['region']),
+                echo=True)
+            ctx.run('kubectl config set-context --current'
+                ' --namespace={namespace}'
+                .format(namespace=config_dict['namespace']),
+                echo=True)
+        else:
+            sys.exit(f"Invalid provider name in rdeploy file: {provider_data.get('name')}")
+    else:
+        sys.exit(f"Invalid rdeploy version in rdeploy file: {settings_dict.get('version')}")
 
 
 # Versioning Helpers
@@ -147,8 +220,7 @@ def create_namespace(ctx, config):
     """
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    set_project(ctx, config)
-    set_cluster(ctx, config)
+    set_context(ctx, config)
 
     ctx.run('kubectl create namespace {namespace}'
             .format(namespace=config_dict['namespace']),
