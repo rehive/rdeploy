@@ -41,15 +41,14 @@ def set_cluster(ctx, config):
 
     if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('1'):
         provider_data = config_dict.get('cloud_provider')
-        if provider_data and provider_data['name'] == 'azure':
+        if provider_data['name'] == 'azure':
             ctx.run('az aks get-credentials -g {group} -n {cluster} --context aks-{region}-{cluster} --context {name}_{cluster}_{region}  --overwrite-existing'
                     .format(group=provider_data['resource_group'],
                             cluster=provider_data['kube_cluster'],
                             region=provider_data['region'],
                             name=provider_data['name']
                             ), echo=True)
-
-        if provider_data and provider_data['name'] == 'gcp':
+        elif provider_data['name'] == 'gcp':
             if provider_data.get('zone'):
                 zone_or_region_param = '--zone {}'.format(provider_data['zone'])
                 zone = provider_data['zone']
