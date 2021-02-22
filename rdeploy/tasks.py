@@ -133,13 +133,18 @@ def set_context(ctx, config):
 
     elif settings_dict.get('version') == '2' or settings_dict.get('version') == 2:
         if provider_data.get('name') == 'gcp':
+            if provider_data.get('zone') is not None:
+                get_zone = provider_data['zone']
+            elif provider_data.get('region') is not None:
+                get_zone = provider_data['region']
+
             ctx.run('kubectl config use-context {name}_{project}_{cluster}_{zone}'
                 ' --namespace={namespace}'
                 .format(namespace=config_dict['namespace'],
                         project=provider_data['project'],
                         cluster=provider_data['kube_cluster'],
                         name=provider_data['name'],
-                        zone=provider_data['zone']),
+                        zone=get_zone),
                 echo=True)
             ctx.run('kubectl config set-context --current'
                 ' --namespace={namespace}'
