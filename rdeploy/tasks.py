@@ -564,19 +564,21 @@ def cloudbuild(ctx, config, tag):
 
     if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('1'):
         provider_data = config_dict.get('cloud_provider')
-        if provider_data and provider_data['name'] == 'azure':
+
+        def azure_image_build(container_registry, image_name, tag):
             ctx.run('az acr run'
                 ' -r {container_registry}'
                 ' -f ./etc/docker/acr.yaml'
                 ' --set IMAGE={image_name}'
                 ' --set TAG_NAME={tag_name}'
                 ' .'
-                .format(container_registry=provider_data['container_registry'],
+                .format(container_registry=container_registry,
                         image_name=image_name,
                         tag_name=tag), echo=True)
-        else:
+
+        def google_image_build(project, image_name, tag):
             log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
-            project=provider_data['project'], image=image_name, tag_name=tag)
+            project=project, image=image_name, tag_name=tag)
             ctx.run('gcloud builds submit .'
                 ' --config etc/docker/cloudbuild.yaml'
                 ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
@@ -584,16 +586,29 @@ def cloudbuild(ctx, config, tag):
                 .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
                 echo=True)
 
+        if config_dict.get('container_registry_provider') == 'azure':
+            azure_image_build(provider_data['container_registry'], image_name, tag)
+
+        elif config_dict.get('container_registry_provider') == 'google':
+            project = config_dict['docker_image'].split('/')[1]
+            google_image_build(project, image_name, tag)
+
+        else:
+            if provider_data and provider_data['name'] == 'azure':
+                azure_image_build(provider_data['container_registry'], image_name, tag)
+            else:
+                google_image_build(provider_data['project'], image_name, tag)
 
     else:
         log_dir = "gs://{project}-cloudbuild-logs/{image}/{tag_name}/".format(
         project=config_dict['cloud_project'], image=image_name, tag_name=tag)
         ctx.run('gcloud builds submit .'
-            ' --config etc/docker/cloudbuild.yaml'
-            ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
-            ' --gcs-log-dir {log_dir}'
-            .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
-            echo=True)
+                ' --config etc/docker/cloudbuild-no-cache.yaml'
+                ' --substitutions _IMAGE={image_name},TAG_NAME={tag_name}'
+                ' --gcs-log-dir {log_dir}'
+                .format(image_name=image_name, tag_name=tag, log_dir=log_dir),
+                echo=True)
+
 
 
 @task(aliases=['cloudbuild-initial'])
