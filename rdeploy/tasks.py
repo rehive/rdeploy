@@ -33,6 +33,12 @@ def set_project(ctx, config):
         ctx.run('gcloud config set project {project}'
                 .format(project=config_dict['cloud_project']), echo=True)
 
+def set_project_gcp(ctx, cloud_provider, project):
+    """Sets the active gcloud project"""
+    if cloud_provider == 'gcp':
+        ctx.run('gcloud config set project {project}'
+            .format(project=project), echo=True)
+
 @task
 def set_cluster(ctx, config):
     """Sets the active cluster"""
@@ -559,8 +565,15 @@ def cloudbuild(ctx, config, tag):
     """
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    set_project(ctx, config)
     image_name = config_dict['docker_image'].split(':')[0]
+
+    if config_dict.get('container_registry_provider') == 'google':
+        project = config_dict['docker_image'].split('/')[1]
+        ctx.run('gcloud config set project {project}'
+            .format(project=project), echo=True)
+    else:
+        set_project(ctx, config)
+
 
     if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('1'):
         provider_data = config_dict.get('cloud_provider')
