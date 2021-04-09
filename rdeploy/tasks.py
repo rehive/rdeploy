@@ -33,12 +33,6 @@ def set_project(ctx, config):
         ctx.run('gcloud config set project {project}'
                 .format(project=config_dict['cloud_project']), echo=True)
 
-def set_project_gcp(ctx, cloud_provider, project):
-    """Sets the active gcloud project"""
-    if cloud_provider == 'gcp':
-        ctx.run('gcloud config set project {project}'
-            .format(project=project), echo=True)
-
 @task
 def set_cluster(ctx, config):
     """Sets the active cluster"""
