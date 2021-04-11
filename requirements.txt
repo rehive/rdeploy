@@ -2,5 +2,5 @@ invoke==0.18.1
 kubernetes==11.0.0
 packaging==20.3
 python-dotenv==0.10.3
-PyYAML==5.1.1
+PyYAML==5.4
 semver==2.8.1
