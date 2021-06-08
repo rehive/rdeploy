@@ -118,20 +118,17 @@ def set_context(ctx, config):
     config_dict = settings_dict['configs'][config]
     provider_data = config_dict.get('cloud_provider')
 
-    if settings_dict.get('version') == '1' or settings_dict.get('version') == 1:
-        ctx.run('kubectl config use-context gcp_{cloud_project}_{cluster}_europe-west1-c'
-            ' --namespace={namespace}'
-            .format(namespace=config_dict['namespace'],
-                    cloud_project=config_dict['cloud_project'],
-                    cluster=config_dict['cluster']),
-            echo=True)
-        ctx.run('kubectl config set-context --current'
-            ' --namespace={namespace}'
-            .format(namespace=config_dict['namespace']),
-            echo=True)
+    # v3 of the config file uses the kube_context value to set the kubernetes cluster context
+    # whereas previous versions used the GCP/AZ tools to set it and a naming convention
+    if str(settings_dict.get('version')) == '3':
+        kube_context = config_dict['kube_cluster']
+        ctx.run('kubectl config use-context {kube_context}'
+                    ' --namespace={namespace}'
+                    .format(namespace=config_dict['namespace']),
+                    echo=True)
 
 
-    elif settings_dict.get('version') == '2' or settings_dict.get('version') == 2:
+    elif str(settings_dict.get('version')) == '2':
         if provider_data.get('name') == 'gcp':
             if provider_data.get('zone') is not None:
                 get_zone = provider_data['zone']
@@ -165,9 +162,20 @@ def set_context(ctx, config):
                 echo=True)
         else:
             sys.exit(f"Invalid provider name in rdeploy file: {provider_data.get('name')}")
-    else:
-        sys.exit(f"Invalid rdeploy version in rdeploy file: {settings_dict.get('version')}")
 
+    # Config file v1 or no version
+    # Backwards compatible with initial version of rdeploy where config file was not yet versioned.
+    else:
+        ctx.run('kubectl config use-context gcp_{cloud_project}_{cluster}_europe-west1-c'
+            ' --namespace={namespace}'
+            .format(namespace=config_dict['namespace'],
+                    cloud_project=config_dict['cloud_project'],
+                    cluster=config_dict['cluster']),
+            echo=True)
+        ctx.run('kubectl config set-context --current'
+            ' --namespace={namespace}'
+            .format(namespace=config_dict['namespace']),
+            echo=True)
 
 # Versioning Helpers
 ####################

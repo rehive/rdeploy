@@ -1,14 +1,14 @@
-version: '2'
+version: '3'
 configs:
   production:
     project_name: example
     docker_image: example.azurecr.io/example
+    kube_context: example
     cloud_provider:
       name: azure
       subscription_id: 57800aa9-e115-4ede-9b70-0e1ce97294f6
       resource_group: example
       region: westeurope
-      kube_cluster: example
     namespace: example
     helm_values_path: ./etc/helm/production/values.yaml
     helm_chart: rehive/rehive-service
@@ -18,12 +18,12 @@ configs:
   staging:
     project_name: example
     docker_image: example.azurecr.io/example
+    kube_context: example
     cloud_provider:
       name: azure
       subscription_id: 57800aa9-e115-4ede-9b70-0e1ce97294f6
       resource_group: example
       region: westeurope
-      kube_cluster: example
       container_registry: example
     namespace: example
     helm_values_path: ./etc/helm/production/values.yaml
