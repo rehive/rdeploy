@@ -118,9 +118,13 @@ def set_context(ctx, config):
     config_dict = settings_dict['configs'][config]
     provider_data = config_dict.get('cloud_provider')
 
+    # Check for future versions
+    if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('3'):
+        sys.exit(f"Unsupported rdeploy.yaml version, please upgrade rdeploy or double check the version number.")
+
     # v3 of the config file uses the kube_context value to set the kubernetes cluster context
-    # whereas previous versions used the GCP/AZ tools to set it and a naming convention
-    if str(settings_dict.get('version')) == '3':
+    # whereas previous versions used the GCP/AZ tools to set it and a naming convention        
+    elif str(settings_dict.get('version')) == '3':
         kube_context = config_dict['kube_cluster']
         ctx.run('kubectl config use-context {kube_context}'
                     ' --namespace={namespace}'

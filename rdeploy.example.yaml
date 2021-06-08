@@ -1,4 +1,4 @@
-version: '3'
+version: '2'
 configs:
   production:
     project_name: example
@@ -9,6 +9,7 @@ configs:
       subscription_id: 57800aa9-e115-4ede-9b70-0e1ce97294f6
       resource_group: example
       region: westeurope
+      kube_cluster: example # optional - can be used to ensure local kube_context is correct
     namespace: example
     helm_values_path: ./etc/helm/production/values.yaml
     helm_chart: rehive/rehive-service
@@ -24,6 +25,7 @@ configs:
       subscription_id: 57800aa9-e115-4ede-9b70-0e1ce97294f6
       resource_group: example
       region: westeurope
+      kube_cluster: example # optional - can be used to ensure local kube_context is correct
       container_registry: example
     namespace: example
     helm_values_path: ./etc/helm/production/values.yaml
