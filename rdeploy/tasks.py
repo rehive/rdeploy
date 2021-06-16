@@ -125,9 +125,10 @@ def set_context(ctx, config):
     # v3 of the config file uses the kube_context value to set the kubernetes cluster context
     # whereas previous versions used the GCP/AZ tools to set it and a naming convention        
     elif str(settings_dict.get('version')) == '3':
-        kube_context = config_dict['kube_cluster']
         ctx.run('kubectl config use-context {kube_context}'
-                    ' --namespace={namespace}'
+                    .format(kube_context = config_dict['kube_context']),
+                    echo=True)
+        ctx.run('kubectl config set-context --current --namespace={namespace}'
                     .format(namespace=config_dict['namespace']),
                     echo=True)
 
