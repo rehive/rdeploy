@@ -102,10 +102,19 @@ def build_management_cmd(config_dict: dict, cmd: str = "", tag: str = "") -> str
     from kubernetes import client, config
     from kubernetes.client.models import V1Container
     from kubernetes.client.rest import ApiException
-    print(tag)
 
+    if tag is not None:
+        print(tag)
+
+    proxy_url = 'http://127.0.0.1:8123'
     config.load_kube_config()
+    client.Configuration._default.proxy = proxy_url
     app_v1_api = client.AppsV1Api()
+
+    settings_dict = get_settings()
+    print(settings_dict)
+
+    # Next step is to add an if statement on the proxy_url based off the version and enviroment
 
     try:
         deployment = app_v1_api.read_namespaced_deployment(
