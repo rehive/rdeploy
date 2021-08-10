@@ -506,7 +506,8 @@ def shell(ctx, config):
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    management_cmd = build_management_cmd(config_dict, "/bin/bash")
+    rdeploy_version = settings_dict['version']
+    management_cmd = build_management_cmd(config_dict, rdeploy_version, config, "/bin/bash")
     ctx.run(management_cmd, pty=True, warn=False, echo=True)
 
 
@@ -516,7 +517,8 @@ def manage(ctx, config, cmd, tag=None):
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    management_cmd = build_management_cmd(config_dict, f'python manage.py {cmd}', tag)
+    rdeploy_version = settings_dict['version']
+    management_cmd = build_management_cmd(config_dict, rdeploy_version, config, f'python manage.py {cmd}', tag)
     ctx.run(management_cmd, pty=True, warn=False, echo=True)
 
 

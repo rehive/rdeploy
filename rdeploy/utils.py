@@ -98,23 +98,30 @@ def decode_data_value(encoded_value):
         return decoded_value
 
 
-def build_management_cmd(config_dict: dict, cmd: str = "", tag: str = "") -> str:
+def build_management_cmd(config_dict: dict, rdeploy_version: str, env: str, cmd: str = "", tag: str = "") -> str:
     from kubernetes import client, config
     from kubernetes.client.models import V1Container
     from kubernetes.client.rest import ApiException
 
+    config.load_kube_config()
+
     if tag is not None:
         print(tag)
 
-    proxy_url = 'http://127.0.0.1:8123'
-    config.load_kube_config()
-    client.Configuration._default.proxy = proxy_url
+    proxy_url = None
+
+    if int(rdeploy_version) >= 3:
+        if env == 'staging3':
+            proxy_url = 'http://127.0.0.1:8123'
+        if env == 'production':
+            proxy_url = 'http://127.0.0.1:8124'
+        if env == 'production3':
+            proxy_url = 'http://127.0.0.1:8124'
+
+    if proxy_url is not None:
+        client.Configuration._default.proxy = proxy_url
+
     app_v1_api = client.AppsV1Api()
-
-    settings_dict = get_settings()
-    print(settings_dict)
-
-    # Next step is to add an if statement on the proxy_url based off the version and enviroment
 
     try:
         deployment = app_v1_api.read_namespaced_deployment(
