@@ -98,7 +98,7 @@ def decode_data_value(encoded_value):
         return decoded_value
 
 
-def build_management_cmd(config_dict: dict, rdeploy_version: str, env: str, cmd: str = "", tag: str = "") -> str:
+def build_management_cmd(config_dict: dict, env: str, cmd: str = "", tag: str = "") -> str:
     from kubernetes import client, config
     from kubernetes.client.models import V1Container
     from kubernetes.client.rest import ApiException
@@ -107,6 +107,8 @@ def build_management_cmd(config_dict: dict, rdeploy_version: str, env: str, cmd:
 
     config.load_kube_config()
 
+    # Workaround to read the proxy-url as it is not currently read by load_kube_config()
+    # TODO: submit as pull request to kubernetes python
     try:
         kcfg = KubeConfigMerger(KUBE_CONFIG_DEFAULT_LOCATION)
         k = KubeConfigLoader(config_dict=kcfg.config)
