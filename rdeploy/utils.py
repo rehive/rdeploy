@@ -102,21 +102,20 @@ def build_management_cmd(config_dict: dict, rdeploy_version: str, env: str, cmd:
     from kubernetes import client, config
     from kubernetes.client.models import V1Container
     from kubernetes.client.rest import ApiException
+    from kubernetes.config.kube_config import KubeConfigMerger, KubeConfigLoader, KUBE_CONFIG_DEFAULT_LOCATION
+    from kubernetes.config.config_exception import ConfigException
 
     config.load_kube_config()
 
+    try:
+        kcfg = KubeConfigMerger(KUBE_CONFIG_DEFAULT_LOCATION)
+        k = KubeConfigLoader(config_dict=kcfg.config)
+        proxy_url = k._cluster['proxy-url']
+    except ConfigException:
+        proxy_url = None
+
     if tag is not None:
         print(tag)
-
-    proxy_url = None
-
-    if int(rdeploy_version) >= 3:
-        if env == 'staging3':
-            proxy_url = 'http://127.0.0.1:8123'
-        if env == 'production':
-            proxy_url = 'http://127.0.0.1:8124'
-        if env == 'production3':
-            proxy_url = 'http://127.0.0.1:8124'
 
     if proxy_url is not None:
         client.Configuration._default.proxy = proxy_url
