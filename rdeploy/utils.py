@@ -98,7 +98,7 @@ def decode_data_value(encoded_value):
         return decoded_value
 
 
-def build_management_cmd(config_dict: dict, env: str, cmd: str = "", tag: str = "") -> str:
+def build_management_cmd(config_dict: dict, cmd: str = "", tag: str = "") -> str:
     from kubernetes import client, config
     from kubernetes.client.models import V1Container
     from kubernetes.client.rest import ApiException
