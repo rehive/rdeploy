@@ -102,9 +102,26 @@ def build_management_cmd(config_dict: dict, cmd: str = "", tag: str = "") -> str
     from kubernetes import client, config
     from kubernetes.client.models import V1Container
     from kubernetes.client.rest import ApiException
-    print(tag)
+    from kubernetes.config.kube_config import KubeConfigMerger, KubeConfigLoader, KUBE_CONFIG_DEFAULT_LOCATION
+    from kubernetes.config.config_exception import ConfigException
 
     config.load_kube_config()
+
+    # Workaround to read the proxy-url as it is not currently read by load_kube_config()
+    # TODO: submit as pull request to kubernetes python
+    try:
+        kcfg = KubeConfigMerger(KUBE_CONFIG_DEFAULT_LOCATION)
+        k = KubeConfigLoader(config_dict=kcfg.config)
+        proxy_url = k._cluster['proxy-url']
+    except ConfigException:
+        proxy_url = None
+
+    if tag is not None:
+        print(tag)
+
+    if proxy_url is not None:
+        client.Configuration._default.proxy = proxy_url
+
     app_v1_api = client.AppsV1Api()
 
     try:
