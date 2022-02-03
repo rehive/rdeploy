@@ -197,11 +197,13 @@ def next_version(ctx, bump):
 
     increment = {
         'build': semver.bump_build,
-        'pre': semver.bump_prerelease,
         'patch': semver.bump_patch,
         'minor': semver.bump_minor,
         'major': semver.bump_major
     }
+
+    if bump in ['pre-patch','pre-minor','pre-major']:
+        incremented = semver.bump_prerelease(increment[bump](latest_tag))
 
     incremented = increment[bump](latest_tag)
 
@@ -215,15 +217,12 @@ def latest_version(ctx):
     result = ctx.run('git tag --sort=-v:refname', hide='both')
     tags = result.stdout.split('\n')
 
-    regex = re.compile(r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'\
-                       '(-(0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)'\
-                       '(\.(0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*)'\
-                       '?(\+[0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*)?$')
+    regex = re.compile(r'^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')
 
     version_tags = filter(regex.search, tags)
     try:
         latest_tag = next(version_tags)
-        return latest_tag
+        return latest_tag[1:] if latest_tag.startswith('v') else latest_tag
     except StopIteration:
         raise ReleaseError('No valid semver tags found in repository')
 
@@ -539,8 +538,12 @@ def git_release(ctx, version_bump, force=False):
     if not force:
         confirm('Did you remember to commit all changes? ')
 
+    if version_bump == 'pre':
+        sys.exit("Please specify pre-patch, pre-minor or pre-major for prereleases.")
+
+
     bumped_version = next_version(ctx, bump=version_bump)
-    tag = bumped_version
+    tag = 'v' + bumped_version
     comment = 'Version ' + bumped_version
 
     # Create an push git tag:
