@@ -203,9 +203,9 @@ def next_version(ctx, bump):
     }
 
     if bump in ['pre-patch','pre-minor','pre-major']:
-        incremented = semver.bump_prerelease(increment[bump](latest_tag))
-
-    incremented = increment[bump](latest_tag)
+        incremented = semver.bump_prerelease(increment[bump[4:]](latest_tag))
+    else:
+        incremented = increment[bump](latest_tag)
 
     return incremented
 
