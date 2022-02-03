@@ -1,6 +1,7 @@
 invoke==0.18.1
-kubernetes==17.17.0
-packaging==20.3
-python-dotenv==0.10.3
-PyYAML==5.4
-semver==2.8.1
+kubernetes==21.7.0
+packaging~=20.9
+python-dotenv==00.19.2
+PyYAML==6.0
+semver==2.13.0
+requests==2.26.0
