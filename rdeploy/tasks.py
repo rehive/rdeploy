@@ -203,7 +203,14 @@ def next_version(ctx, bump):
     }
 
     if bump in ['pre-patch','pre-minor','pre-major']:
-        incremented = semver.bump_prerelease(increment[bump[4:]](latest_tag))
+        incremented = increment[bump[4:]](latest_tag)
+        try:
+            #Check
+            incremented = semver.bump_prerelease(latest_prerelease(ctx, incremented)) # Try to increment the pre-release if there are existing pre-releases
+        except:
+            # No existing pre-release, so create one
+            incremented =  semver.bump_prerelease(incremented)
+        
     else:
         incremented = increment[bump](latest_tag)
 
@@ -220,6 +227,22 @@ def latest_version(ctx):
     regex = re.compile(r'^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')
 
     version_tags = filter(regex.search, tags)
+    try:
+        latest_tag = next(version_tags)
+        return latest_tag[1:] if latest_tag.startswith('v') else latest_tag
+    except StopIteration:
+        raise ReleaseError('No valid semver tags found in repository')
+
+@task(aliases=['latest-prerelese'])
+def latest_prerelease(ctx, version):
+    """Checks the git tags and returns the current latest version"""
+    ctx.run('git fetch --tags')
+    result = ctx.run('git tag --sort=-v:refname', hide='both')
+    tags = result.stdout.split('\n')
+
+    regex = re.compile(r'^v?{}(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'.format(version))
+    version_tags = filter(regex.search, tags)
+    
     try:
         latest_tag = next(version_tags)
         return latest_tag[1:] if latest_tag.startswith('v') else latest_tag
