@@ -523,12 +523,12 @@ def live_image(ctx, config):
 
 
 @task(aliases=['bash'])
-def shell(ctx, config):
+def shell(ctx, config, tag=None):
     """Exec into the management container"""
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    management_cmd = build_management_cmd(config_dict, "/bin/bash")
+    management_cmd = build_management_cmd(config_dict, "/bin/bash", tag)
     ctx.run(management_cmd, pty=True, warn=False, echo=True)
 
 
