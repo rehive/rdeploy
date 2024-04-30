@@ -10,12 +10,12 @@ configs:
       resource_group: example
       region: westeurope
       kube_cluster: example # optional - can be used to ensure local kube_context is correct
+      helm_registry: europe-west4-docker.pkg.dev
     namespace: example
     helm_values_path: ./etc/helm/production/values.yaml
-    helm_chart: rehive/rehive-service
+    helm_chart: rehive-helm-charts/rehive-service
     helm_chart_version: 0.1.38
     helm_version: 3.0.3
-    gcp_oci_helm_registry: false
     use_system_helm: false
   staging:
     project_name: example
@@ -33,5 +33,4 @@ configs:
     helm_chart: rehive/rehive-service
     helm_chart_version: 0.1.38
     helm_version: 3.0.3
-    gcp_oci_helm_registry: false
     use_system_helm: false

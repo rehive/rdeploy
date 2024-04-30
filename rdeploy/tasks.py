@@ -354,11 +354,13 @@ def install(ctx, config):
 
     if config_dict.get('helm_version') and version.parse(str(config_dict['helm_version'])) <= version.parse('3'):
         install_flag = " --name"
-
-    if config_dict.get('gcp_oci_helm_registry'):
+        
+    provider_data = config_dict.get('cloud_provider')
+    helm_registry = provider_data.get('helm_registry')
+    if provider_data.get('name') == 'gcp' and helm_registry:
         # Authenticate with the GCP Artifact Registry
-        ctx.run('gcloud auth print-access-token | helm registry login -u oauth2accesstoken --password-stdin https://{helm_chart}'.format(helm_chart=config_dict['helm_chart']), echo=True)
-        helm_chart = 'oci://{chart_url}'.format(chart_url=config_dict['helm_chart'])
+        ctx.run('gcloud auth print-access-token | {helm_bin} registry login -u oauth2accesstoken --password-stdin https://{helm_registry}'.format(helm_registry=helm_registry, helm_bin=helm_bin), echo=True)
+        helm_chart = 'oci://{helm_registry}/{gcp_project}/{helm_chart}'.format(helm_registry=helm_registry, gcp_project=provider_data['project'], helm_chart=config_dict['helm_chart'])
     else:
         # Add the Rehive Helm Repo
         ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin=helm_bin), echo=True)
@@ -388,10 +390,12 @@ def upgrade(ctx, config, version):
 
     helm_bin = get_helm_bin(config_dict)
     
-    if config_dict.get('gcp_oci_helm_registry'):
+    provider_data = config_dict.get('cloud_provider')
+    helm_registry = provider_data.get('helm_registry')
+    if provider_data.get('name') == 'gcp' and helm_registry:
         # Authenticate with the GCP Artifact Registry
-        ctx.run('gcloud auth print-access-token | helm registry login -u oauth2accesstoken --password-stdin https://{chart_url}'.format(chart_url=config_dict['helm_chart']), echo=True)
-        helm_chart = 'oci://{chart_url}'.format(chart_url=config_dict['helm_chart'])
+        ctx.run('gcloud auth print-access-token | {helm_bin} registry login -u oauth2accesstoken --password-stdin https://{helm_registry}'.format(helm_registry=helm_registry, helm_bin=helm_bin), echo=True)
+        helm_chart = 'oci://{helm_registry}/{gcp_project}/{helm_chart}'.format(helm_registry=helm_registry, gcp_project=provider_data['project'], helm_chart=config_dict['helm_chart'])
     else:
         helm_chart = config_dict['helm_chart']
 
@@ -454,7 +458,9 @@ def helm_setup(ctx, config):
 
     helm_bin = get_helm_bin(config_dict)
     
-    if not config_dict.get('gcp_oci_helm_registry'):
+    provider = config_dict.get('cloud_provider')
+    helm_registry = provider.get('helm_registry')
+    if not (provider.get('name') == 'gcp' and helm_registry):
         ctx.run('{helm_bin} repo add stable https://charts.helm.sh/stable'.format(helm_bin=helm_bin), echo=True)
         ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin=helm_bin), echo=True)
 
