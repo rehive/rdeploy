@@ -12,3 +12,10 @@ To install, use pip::
 
 Once installed, you can use it from within your project directory. The console script uses an `rdeploy.yaml`
 file to configure itself.
+
+Updating on PyPi
+----------------
+
+rm -rf dist
+python setup.py sdist bdist_wheel
+twine upload dist/*

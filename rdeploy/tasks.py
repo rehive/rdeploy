@@ -339,67 +339,6 @@ def create_public_bucket(ctx, config, bucket_name):
             .format(bucket_name=bucket_name))
 
 
-@task(aliases=['template-install'])
-def template_install(ctx, config):
-    """
-    Installs kubernetes deployment from a helm template
-    """
-
-    settings_dict = get_settings()
-    config_dict = settings_dict['configs'][config]
-    set_context(ctx, config)
-
-    repository = 'https://rehive.github.io/charts'
-    chart_directory = "var/helm/chart/{config}".format(config=config)
-    manifest_directory = "var/helm/manifests/{config}".format(config=config)
-    log_directory = "var/helm/log/{config}".format(config=config)
-    err_file = "{log_dir}/template_install.error.log".format(
-        log_dir=log_directory)
-    out_file = "{log_dir}/template_install.out.log".format(
-        log_dir=log_directory)
-    chart_name = config_dict["helm_chart"]
-
-    if len(chart_name.split('/')) > 0:
-        chart_name = chart_name.spliat('/')[1]
-
-    ctx.run('mkdir -p {chart_dir} {manifest_dir} {log_dir}'
-            .format(chart_dir=chart_directory,
-                    manifest_dir=manifest_directory,
-                    log_dir=log_directory),
-            echo=False)
-
-    ctx.run('helm fetch --repo {repository} --untar '
-            '--untardir {chart_dir} '
-            '--version {version} {chart_name}'
-            .format(repository=repository, chart_dir=chart_directory,
-                    version=config_dict['helm_chart_version'],
-                    chart_name=chart_name),
-            echo=True)
-
-    ctx.run('helm template {chart_dir}/{chart_name} '
-            '--values {values_file} '
-            '--name {release_name} '
-            '--namespace {namespace} '
-            '--output-dir {manifest_dir} '
-            .format(chart_dir=chart_directory,
-                    chart_name=chart_name,
-                    manifest_dir=manifest_directory,
-                    namespace=config_dict['namespace'],
-                    release_name=config_dict['project_name'],
-                    values_file=config_dict['helm_values_path']),
-            err_stream=open(err_file, 'w'),
-            out_stream=open(out_file, 'w'), echo=True)
-
-    ctx.run('kubectl create namespace {namespace} || '
-            'kubectl apply --recursive '
-            '--filename {manifest_dir}/{chart_name} '
-            '--namespace {namespace} '
-            .format(chart_name=chart_name,
-                    manifest_dir=manifest_directory,
-                    namespace=config_dict['namespace']),
-            echo=True)
-
-
 @task
 def install(ctx, config):
     """
@@ -416,7 +355,15 @@ def install(ctx, config):
     if config_dict.get('helm_version') and version.parse(str(config_dict['helm_version'])) <= version.parse('3'):
         install_flag = " --name"
 
-    ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin=helm_bin), echo=True)
+    if config_dict.get('gcp_oci_helm_registry'):
+        # Authenticate with the GCP Artifact Registry
+        ctx.run('gcloud auth print-access-token | helm registry login -u oauth2accesstoken --password-stdin https://{helm_chart}'.format(helm_chart=config_dict['helm_chart']), echo=True)
+        helm_chart = 'oci://{chart_url}'.format(chart_url=config_dict['helm_chart'])
+    else:
+        # Add the Rehive Helm Repo
+        ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin=helm_bin), echo=True)
+        helm_chart = config_dict['helm_chart']
+    
     ctx.run('{helm_bin} install{helm_install_flag} {project_name} '
             '--values {helm_values_path} '
             '--version {helm_chart_version} {helm_chart}'
@@ -424,7 +371,7 @@ def install(ctx, config):
                     project_name=config_dict['project_name'],
                     helm_install_flag=install_flag,
                     helm_values_path=config_dict['helm_values_path'],
-                    helm_chart=config_dict['helm_chart'],
+                    helm_chart=helm_chart,
                     helm_chart_version=config_dict['helm_chart_version']),
             echo=True)
 
@@ -440,6 +387,13 @@ def upgrade(ctx, config, version):
     set_context(ctx, config)
 
     helm_bin = get_helm_bin(config_dict)
+    
+    if config_dict.get('gcp_oci_helm_registry'):
+        # Authenticate with the GCP Artifact Registry
+        ctx.run('gcloud auth print-access-token | helm registry login -u oauth2accesstoken --password-stdin https://{chart_url}'.format(chart_url=config_dict['helm_chart']), echo=True)
+        helm_chart = 'oci://{chart_url}'.format(chart_url=config_dict['helm_chart'])
+    else:
+        helm_chart = config_dict['helm_chart']
 
     ctx.run('{helm_bin} upgrade {project_name} '
             '--values {helm_values_path} '
@@ -447,7 +401,7 @@ def upgrade(ctx, config, version):
             '--version {helm_chart_version} {helm_chart}'
             .format(helm_bin=helm_bin,
                     project_name=config_dict['project_name'],
-                    helm_chart=config_dict['helm_chart'],
+                    helm_chart=helm_chart,
                     helm_values_path=config_dict['helm_values_path'],
                     version=version,
                     helm_chart_version=config_dict['helm_chart_version']),
@@ -499,8 +453,10 @@ def helm_setup(ctx, config):
     tar.extractall('./opt/helm-v{version}'.format(version=helm_version))
 
     helm_bin = get_helm_bin(config_dict)
-    ctx.run('{helm_bin} repo add stable https://charts.helm.sh/stable'.format(helm_bin=helm_bin), echo=True)
-    ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin=helm_bin), echo=True)
+    
+    if not config_dict.get('gcp_oci_helm_registry'):
+        ctx.run('{helm_bin} repo add stable https://charts.helm.sh/stable'.format(helm_bin=helm_bin), echo=True)
+        ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin=helm_bin), echo=True)
 
     print('Successfully installed helm to opt/helm-v{version}/{os_string}/ \n'
           'Please make sure this directory has been added to .gitignore.'. format(version=helm_version,

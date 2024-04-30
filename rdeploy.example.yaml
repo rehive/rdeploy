@@ -15,6 +15,7 @@ configs:
     helm_chart: rehive/rehive-service
     helm_chart_version: 0.1.38
     helm_version: 3.0.3
+    gcp_oci_helm_registry: false
     use_system_helm: false
   staging:
     project_name: example
@@ -32,4 +33,5 @@ configs:
     helm_chart: rehive/rehive-service
     helm_chart_version: 0.1.38
     helm_version: 3.0.3
+    gcp_oci_helm_registry: false
     use_system_helm: false
