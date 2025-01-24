@@ -4,4 +4,4 @@ packaging~=20.9
 python-dotenv==00.19.2
 PyYAML==6.0
 semver==2.13.0
-requests==2.31.0
+requests==2.32.2
