@@ -15,6 +15,7 @@ from rdeploy.tasks import (
     set_context,
     create_namespace,
     git_release,
+    upgrade,
 )
 from rdeploy.exceptions import ReleaseError
 
@@ -275,6 +276,50 @@ class TestCreateNamespace:
         mock_ctx.run.assert_called_once()
         call_args = mock_ctx.run.call_args[0][0]
         assert 'kubectl create namespace staging-ns' in call_args
+
+
+class TestUpgrade:
+    def test_atomic_by_default(self, mock_ctx, sample_settings_v3):
+        mock_ctx.run.return_value = MagicMock(failed=False)
+        with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
+            with patch('rdeploy.tasks.set_context'):
+                upgrade(mock_ctx, 'staging', tag='1.2.3')
+        call_args = mock_ctx.run.call_args[0][0]
+        assert 'helm upgrade my-project' in call_args
+        assert '--set image.tag=1.2.3' in call_args
+        assert '--atomic --timeout 15m' in call_args
+
+    def test_custom_timeout(self, mock_ctx, sample_settings_v3):
+        mock_ctx.run.return_value = MagicMock(failed=False)
+        with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
+            with patch('rdeploy.tasks.set_context'):
+                upgrade(mock_ctx, 'staging', tag='1.2.3', timeout='15m')
+        call_args = mock_ctx.run.call_args[0][0]
+        assert '--atomic --timeout 15m' in call_args
+
+    def test_no_atomic_opt_out(self, mock_ctx, sample_settings_v3):
+        mock_ctx.run.return_value = MagicMock(failed=False)
+        with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
+            with patch('rdeploy.tasks.set_context'):
+                upgrade(mock_ctx, 'staging', tag='1.2.3', atomic=False)
+        call_args = mock_ctx.run.call_args[0][0]
+        assert '--atomic' not in call_args
+        assert '--timeout' not in call_args
+
+    def test_failed_upgrade_exits_with_rollback_message(self, mock_ctx, sample_settings_v3):
+        mock_ctx.run.return_value = MagicMock(failed=True)
+        with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
+            with patch('rdeploy.tasks.set_context'):
+                with pytest.raises(SystemExit, match='rolled the release back'):
+                    upgrade(mock_ctx, 'staging', tag='1.2.3')
+
+    def test_failed_non_atomic_upgrade_exits(self, mock_ctx, sample_settings_v3):
+        mock_ctx.run.return_value = MagicMock(failed=True)
+        with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
+            with patch('rdeploy.tasks.set_context'):
+                with pytest.raises(SystemExit, match='failed') as exc_info:
+                    upgrade(mock_ctx, 'staging', tag='1.2.3', atomic=False)
+        assert 'rolled the release back' not in str(exc_info.value)
 
 
 class TestGitRelease:

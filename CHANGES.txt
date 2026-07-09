@@ -1,4 +1,18 @@
 ----
+Version 0.3.0, Thu 09 Jul 2026
+===============================
+- `rdeploy upgrade` now runs helm with `--atomic` by default: helm waits for
+  the rollout to complete (up to `--timeout`, default 15m) and automatically
+  rolls back to the previous release if it fails, and the command exits with
+  an error instead of reporting success.
+- Added `--no-atomic` to restore the previous fire-and-forget behaviour and
+  `--timeout` to adjust how long helm waits.
+
+BREAKING CHANGES:
+- `rdeploy upgrade` now blocks until the rollout completes and exits non-zero
+  on failure. Scripts that relied on it returning immediately should pass
+  `--no-atomic`.
+
 Version 0.2.0, Thu 09 Jul 2026
 ===============================
 - Upgraded all dependencies to current versions: invoke 2.2+/3.x, semver 3.x,

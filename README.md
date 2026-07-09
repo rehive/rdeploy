@@ -36,7 +36,7 @@ rdeploy git-release patch
 | `set-context` | Switch cluster and namespace context |
 | `activate` | Fetch and set project, cluster, and namespace |
 | `install` | Install a Helm chart deployment |
-| `upgrade` | Upgrade a Helm deployment to a new image tag |
+| `upgrade` | Upgrade a Helm deployment to a new image tag (atomic by default: waits for the rollout and rolls back on failure; use `--no-atomic` to skip, `--timeout` to adjust the wait, default `15m`) |
 | `helm` | Run arbitrary Helm commands |
 | `helm-setup` | Download and configure a local Helm binary |
 | `git-release` | Bump version and push a git tag |
