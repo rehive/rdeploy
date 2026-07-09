@@ -1,4 +1,27 @@
 ----
+Version 0.2.0, Thu 09 Jul 2026
+===============================
+- Upgraded all dependencies to current versions: invoke 2.2+/3.x, semver 3.x,
+  kubernetes 28+, packaging 23+, python-dotenv 1.0+, requests 2.31+.
+- Migrated packaging from setup.py to pyproject.toml.
+- Replaced deprecated pkg_resources and distutils.strtobool (removed in
+  Python 3.12) with importlib.metadata and a local implementation.
+- Added a test suite (pytest).
+- Removed all Azure support. rdeploy now targets GCP exclusively. Commands
+  fail with a clear error when rdeploy.yaml specifies a non-gcp provider.
+- Fixed latest-prerelease regex to escape the version argument.
+
+BREAKING CHANGES:
+- Azure support removed: set-cluster, set-context, set-project and cloudbuild
+  no longer work with `cloud_provider.name: azure` configs, and the
+  `container_registry_provider: azure` setting is no longer honoured.
+- `rdeploy upgrade` named argument renamed: `--version` is now `--tag`
+  (positional usage, e.g. `rdeploy upgrade prod 1.2.3`, is unchanged).
+- The `bash` alias for the `shell` command was removed; use `rdeploy shell`.
+- `rdeploy latest-prerelease` named argument renamed: `--version` is now
+  `--ver`. The misspelled `latest-prerelese` alias was removed.
+- Requires Python 3.9+.
+
 Version 0.1.9, Tue 30 Apr 2024
 ===============================
 - Fix bug in Google Artifact Registry for helm charts handling

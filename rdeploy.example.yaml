@@ -1,36 +1,34 @@
-version: '2'
+version: '3'
 configs:
   production:
     project_name: example
-    docker_image: example.azurecr.io/example
-    kube_context: example
+    docker_image: gcr.io/my-project/example:latest
+    kube_context: gke_my-project_europe-west4_cluster-1
     cloud_provider:
-      name: azure
-      subscription_id: 57800aa9-e115-4ede-9b70-0e1ce97294f6
-      resource_group: example
-      region: westeurope
-      kube_cluster: example # optional - can be used to ensure local kube_context is correct
+      name: gcp
+      project: my-project
+      kube_cluster: cluster-1
+      region: europe-west4
       helm_registry: europe-west4-docker.pkg.dev
-    namespace: example
+    namespace: production
     helm_values_path: ./etc/helm/production/values.yaml
-    helm_chart: rehive-helm-charts/rehive-service
-    helm_chart_version: 0.1.38
-    helm_version: 3.0.3
-    use_system_helm: false
+    helm_chart: rehive-service
+    helm_chart_version: 0.2.0
+    helm_version: 3.14.0
+    use_system_helm: true
   staging:
     project_name: example
-    docker_image: example.azurecr.io/example
-    kube_context: example
+    docker_image: gcr.io/my-project/example:latest
+    kube_context: gke_my-project_europe-west4_cluster-1
     cloud_provider:
-      name: azure
-      subscription_id: 57800aa9-e115-4ede-9b70-0e1ce97294f6
-      resource_group: example
-      region: westeurope
-      kube_cluster: example # optional - can be used to ensure local kube_context is correct
-      container_registry: example
-    namespace: example
-    helm_values_path: ./etc/helm/production/values.yaml
-    helm_chart: rehive/rehive-service
-    helm_chart_version: 0.1.38
-    helm_version: 3.0.3
-    use_system_helm: false
+      name: gcp
+      project: my-project
+      kube_cluster: cluster-1
+      region: europe-west4
+      helm_registry: europe-west4-docker.pkg.dev
+    namespace: staging
+    helm_values_path: ./etc/helm/staging/values.yaml
+    helm_chart: rehive-service
+    helm_chart_version: 0.2.0
+    helm_version: 3.14.0
+    use_system_helm: true

@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rdeploy"
+dynamic = ["version"]
+description = "CLI that makes it easy to build and deploy an application to k8s."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Rehive", email = "info@rehive.com"},
+]
+keywords = ["docker", "python", "helm", "kubernetes", "build", "automation", "deploy"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: System Administrators",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: System :: Installation/Setup",
+    "Topic :: System :: Software Distribution",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "invoke>=2.2,<4",
+    "kubernetes>=28,<36",
+    "packaging>=23",
+    "python-dotenv>=1.0",
+    "PyYAML>=6.0",
+    "semver>=3.0,<4",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-mock>=3.10",
+    "coverage>=7.0",
+]
+
+[project.scripts]
+rdeploy = "rdeploy.main:program.run"
+
+[project.urls]
+Homepage = "https://github.com/rehive/rdeploy"
+
+[tool.setuptools.dynamic]
+version = {file = "VERSION"}
+
+[tool.setuptools.packages.find]
+exclude = ["docs", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

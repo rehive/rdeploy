@@ -1,7 +1,7 @@
-invoke==0.18.1
-kubernetes==21.7.0
-packaging~=20.9
-python-dotenv==00.19.2
-PyYAML==6.0
-semver==2.13.0
-requests==2.31.0
+invoke>=2.2,<4
+kubernetes>=28,<36
+packaging>=23
+python-dotenv>=1.0
+PyYAML>=6.0
+semver>=3.0,<4
+requests>=2.31

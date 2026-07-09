@@ -10,11 +10,20 @@ except ImportError:
     from yaml import Loader
 from sys import platform
 
-
-from distutils.util import strtobool
 from invoke.exceptions import ParseError
 from json import dumps
 from .exceptions import ExecuteError
+
+
+def strtobool(val):
+    """Convert a string representation of truth to True or False."""
+    val = val.strip().lower()
+    if val in ('y', 'yes', 't', 'true', 'on', '1'):
+        return True
+    elif val in ('n', 'no', 'f', 'false', 'off', '0'):
+        return False
+    else:
+        raise ValueError(f"invalid truth value {val!r}")
 
 
 def get_path():
@@ -44,7 +53,6 @@ def confirm(prompt='Continue?\n', failure_prompt='User cancelled task'):
     ParseError on negative response
     """
     response = input(prompt)
-    response_bool = False
 
     try:
         response_bool = strtobool(response)
@@ -108,7 +116,6 @@ def build_management_cmd(config_dict: dict, cmd: str = "", tag: str = "") -> str
     config.load_kube_config()
 
     # Workaround to read the proxy-url as it is not currently read by load_kube_config()
-    # TODO: submit as pull request to kubernetes python
     try:
         kcfg = KubeConfigMerger(KUBE_CONFIG_DEFAULT_LOCATION)
         k = KubeConfigLoader(config_dict=kcfg.config)

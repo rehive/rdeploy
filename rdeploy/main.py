@@ -1,4 +1,5 @@
-import pkg_resources
+from importlib.metadata import version as get_version
+
 from invoke import Argument, Collection, Program
 
 import rdeploy
@@ -13,5 +14,5 @@ class MainProgram(Program):
         return core_args + extra_args
 
 
-version = pkg_resources.get_distribution("rdeploy").version
+version = get_version("rdeploy")
 program = MainProgram(namespace=Collection.from_module(rdeploy), version=version)
