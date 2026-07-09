@@ -371,9 +371,14 @@ def install(ctx, config):
 
 
 @task
-def upgrade(ctx, config, tag):
+def upgrade(ctx, config, tag, atomic=True, timeout='15m'):
     """
     Upgrades kubernetes deployment
+
+    By default the upgrade runs atomically: helm waits for the rollout to
+    complete and rolls back to the previous release if it fails, and the
+    task exits with an error. Use --no-atomic to restore the old
+    fire-and-forget behaviour, and --timeout to change how long helm waits.
     """
 
     settings_dict = get_settings()
@@ -391,17 +396,31 @@ def upgrade(ctx, config, tag):
     else:
         helm_chart = config_dict['helm_chart']
 
-    ctx.run('{helm_bin} upgrade {project_name} '
-            '--values {helm_values_path} '
-            '--set image.tag={version} '
-            '--version {helm_chart_version} {helm_chart}'
-            .format(helm_bin=helm_bin,
-                    project_name=config_dict['project_name'],
-                    helm_chart=helm_chart,
-                    helm_values_path=config_dict['helm_values_path'],
-                    version=tag,
-                    helm_chart_version=config_dict['helm_chart_version']),
-            echo=True)
+    atomic_flags = ' --atomic --timeout {timeout}'.format(timeout=timeout) if atomic else ''
+
+    result = ctx.run('{helm_bin} upgrade {project_name} '
+                     '--values {helm_values_path} '
+                     '--set image.tag={version} '
+                     '--version {helm_chart_version}{atomic_flags} {helm_chart}'
+                     .format(helm_bin=helm_bin,
+                             project_name=config_dict['project_name'],
+                             helm_chart=helm_chart,
+                             helm_values_path=config_dict['helm_values_path'],
+                             version=tag,
+                             helm_chart_version=config_dict['helm_chart_version'],
+                             atomic_flags=atomic_flags),
+                     echo=True, warn=True)
+
+    if result.failed:
+        if atomic:
+            sys.exit('Upgrade of {project_name} to {version} failed.'
+                     ' Helm rolled the release back to the previous version.'
+                     .format(project_name=config_dict['project_name'],
+                             version=tag))
+        else:
+            sys.exit('Upgrade of {project_name} to {version} failed.'
+                     .format(project_name=config_dict['project_name'],
+                             version=tag))
 
 
 @task
