@@ -423,7 +423,7 @@ class TestWatchRollout:
         out = capsys.readouterr().out
         assert out.count('my-project') == 1
 
-    def test_changed_table_reprinted(self, capsys):
+    def test_changed_row_reprinted_without_header(self, capsys):
         from rdeploy.tasks import _watch_rollout
         event = self._instant_event([False, False])
         results = [MagicMock(returncode=0, stdout=self.TABLE_V1, stderr=''),
@@ -433,6 +433,42 @@ class TestWatchRollout:
         out = capsys.readouterr().out
         assert '1/3' in out
         assert '3/3' in out
+        # The header is a one-time baseline; changes print only the row.
+        assert out.count('NAME') == 1
+
+    def test_only_changed_rows_reprinted(self, capsys):
+        from rdeploy.tasks import _watch_rollout
+        table_v1 = ('NAME             READY   UP-TO-DATE   AVAILABLE   AGE\n'
+                    'scheduler        1/1     1            1           2y\n'
+                    'worker-general   1/1     1            1           2y\n')
+        table_v2 = ('NAME             READY   UP-TO-DATE   AVAILABLE   AGE\n'
+                    'scheduler        1/1     1            1           2y\n'
+                    'worker-general   2/1     1            2           2y\n')
+        event = self._instant_event([False, False])
+        results = [MagicMock(returncode=0, stdout=table_v1, stderr=''),
+                   MagicMock(returncode=0, stdout=table_v2, stderr='')]
+        with patch('rdeploy.tasks.subprocess.run', side_effect=results):
+            _watch_rollout(event)
+        out = capsys.readouterr().out
+        # scheduler never changed: baseline only. worker-general changed once.
+        assert out.count('scheduler') == 1
+        assert out.count('worker-general') == 2
+        assert '2/1' in out
+
+    def test_deployment_created_mid_upgrade_appears(self, capsys):
+        from rdeploy.tasks import _watch_rollout
+        table_v1 = ('NAME        READY   UP-TO-DATE   AVAILABLE   AGE\n'
+                    'scheduler   1/1     1            1           2y\n')
+        table_v2 = ('NAME         READY   UP-TO-DATE   AVAILABLE   AGE\n'
+                    'new-worker   0/1     1            0           2s\n'
+                    'scheduler    1/1     1            1           2y\n')
+        event = self._instant_event([False, False])
+        results = [MagicMock(returncode=0, stdout=table_v1, stderr=''),
+                   MagicMock(returncode=0, stdout=table_v2, stderr='')]
+        with patch('rdeploy.tasks.subprocess.run', side_effect=results):
+            _watch_rollout(event)
+        out = capsys.readouterr().out
+        assert 'new-worker' in out
 
     def test_gives_up_after_repeated_kubectl_failures(self, capsys):
         from rdeploy.tasks import _watch_rollout

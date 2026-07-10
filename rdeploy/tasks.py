@@ -372,10 +372,16 @@ def install(ctx, config):
             echo=True)
 
 
-def _watch_rollout(stop_event, poll_interval=5):
-    """Print the `kubectl get deployments` status table while the atomic helm
+def _watch_rollout(stop_event, poll_interval=2):
+    """Print live `kubectl get deployments` progress while the atomic helm
     upgrade waits, so you can see READY/UP-TO-DATE/AVAILABLE progress instead
     of a silent wait.
+
+    Prints the full table once as a baseline, then only the rows that change
+    (ignoring the ticking AGE column), so the output stays quiet unless a
+    deployment is actually transitioning. Append-only lines are used instead
+    of an in-place redraw because helm shares the same stdout and can print
+    at any moment.
 
     Runs in a background daemon thread and is fully decoupled from the
     upgrade: its output is informational only and its exit codes are ignored.
@@ -383,15 +389,15 @@ def _watch_rollout(stop_event, poll_interval=5):
     status`) means every poll reflects the cluster's current state -- no
     generation tracking, deployments created by the upgrade itself show up
     automatically, and there are no long-lived child processes to tear down:
-    each poll is one short, bounded `kubectl get`. The table is only
-    reprinted when something other than AGE changes.
+    each poll is one short, bounded `kubectl get`.
 
     set_context() has already pointed kubectl at the right context and
     namespace. The whole body is wrapped in a broad except so a broken
     watcher (kubectl missing, permission error) can never raise into the
     main flow or change the exit code.
     """
-    last_key = None
+    last_rows = {}
+    header_printed = False
     failures = 0
     try:
         while not stop_event.is_set():
@@ -400,15 +406,24 @@ def _watch_rollout(stop_event, poll_interval=5):
                                     capture_output=True, text=True)
             if status.returncode == 0:
                 failures = 0
-                # Compare without the last (AGE) column so the ticking age of
-                # young deployments doesn't reprint an otherwise unchanged
-                # table.
-                key = '\n'.join(' '.join(line.split()[:-1])
-                                for line in status.stdout.splitlines())
-                if key != last_key:
-                    last_key = key
-                    for line in status.stdout.splitlines():
-                        print('[rollout] {line}'.format(line=line), flush=True)
+                lines = status.stdout.splitlines()
+                to_print = []
+                if lines and not header_printed:
+                    header_printed = True
+                    to_print.append(lines[0])
+                for row in lines[1:]:
+                    fields = row.split()
+                    if not fields:
+                        continue
+                    # Compare without the last (AGE) column so the ticking
+                    # age of young deployments doesn't reprint an otherwise
+                    # unchanged row.
+                    name, key = fields[0], ' '.join(fields[:-1])
+                    if last_rows.get(name) != key:
+                        last_rows[name] = key
+                        to_print.append(row)
+                for line in to_print:
+                    print('[rollout] {line}'.format(line=line), flush=True)
             else:
                 # Tolerate transient API errors, but give up (quietly, with a
                 # single note) if kubectl keeps failing.
@@ -438,10 +453,11 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
     fire-and-forget behaviour, and --timeout to change how long helm waits.
 
     While the atomic upgrade waits, a live progress display polls
-    `kubectl get deployments` and prints the status table (prefixed with
-    [rollout]) whenever it changes, so you can see READY/UP-TO-DATE/AVAILABLE
-    progress instead of a silent wait. This is purely informational and never
-    affects the result; use --no-progress to disable it.
+    `kubectl get deployments` and prints the status table once, then any row
+    that changes (prefixed with [rollout]), so you can see
+    READY/UP-TO-DATE/AVAILABLE progress instead of a silent wait. This is
+    purely informational and never affects the result; use --no-progress to
+    disable it.
     """
 
     settings_dict = get_settings()
