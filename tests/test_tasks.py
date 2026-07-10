@@ -279,11 +279,16 @@ class TestCreateNamespace:
 
 
 class TestUpgrade:
+    # _watch_rollout is patched in every test so the progress watcher thread
+    # never shells out to a real kubectl (and whatever cluster the local
+    # kubeconfig points at) during unit tests.
+
     def test_atomic_by_default(self, mock_ctx, sample_settings_v3):
         mock_ctx.run.return_value = MagicMock(failed=False)
         with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
             with patch('rdeploy.tasks.set_context'):
-                upgrade(mock_ctx, 'staging', tag='1.2.3')
+                with patch('rdeploy.tasks._watch_rollout'):
+                    upgrade(mock_ctx, 'staging', tag='1.2.3')
         call_args = mock_ctx.run.call_args[0][0]
         assert 'helm upgrade my-project' in call_args
         assert '--set image.tag=1.2.3' in call_args
@@ -293,7 +298,8 @@ class TestUpgrade:
         mock_ctx.run.return_value = MagicMock(failed=False)
         with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
             with patch('rdeploy.tasks.set_context'):
-                upgrade(mock_ctx, 'staging', tag='1.2.3', timeout='15m')
+                with patch('rdeploy.tasks._watch_rollout'):
+                    upgrade(mock_ctx, 'staging', tag='1.2.3', timeout='15m')
         call_args = mock_ctx.run.call_args[0][0]
         assert '--atomic --timeout 15m' in call_args
 
@@ -301,7 +307,8 @@ class TestUpgrade:
         mock_ctx.run.return_value = MagicMock(failed=False)
         with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
             with patch('rdeploy.tasks.set_context'):
-                upgrade(mock_ctx, 'staging', tag='1.2.3', atomic=False)
+                with patch('rdeploy.tasks._watch_rollout'):
+                    upgrade(mock_ctx, 'staging', tag='1.2.3', atomic=False)
         call_args = mock_ctx.run.call_args[0][0]
         assert '--atomic' not in call_args
         assert '--timeout' not in call_args
@@ -310,16 +317,165 @@ class TestUpgrade:
         mock_ctx.run.return_value = MagicMock(failed=True)
         with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
             with patch('rdeploy.tasks.set_context'):
-                with pytest.raises(SystemExit, match='rolled the release back'):
-                    upgrade(mock_ctx, 'staging', tag='1.2.3')
+                with patch('rdeploy.tasks._watch_rollout'):
+                    with pytest.raises(SystemExit, match='rolled the release back'):
+                        upgrade(mock_ctx, 'staging', tag='1.2.3')
 
     def test_failed_non_atomic_upgrade_exits(self, mock_ctx, sample_settings_v3):
         mock_ctx.run.return_value = MagicMock(failed=True)
         with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
             with patch('rdeploy.tasks.set_context'):
-                with pytest.raises(SystemExit, match='failed') as exc_info:
-                    upgrade(mock_ctx, 'staging', tag='1.2.3', atomic=False)
+                with patch('rdeploy.tasks._watch_rollout'):
+                    with pytest.raises(SystemExit, match='failed') as exc_info:
+                        upgrade(mock_ctx, 'staging', tag='1.2.3', atomic=False)
         assert 'rolled the release back' not in str(exc_info.value)
+
+    def test_progress_watcher_runs_for_atomic_upgrade(self, mock_ctx, sample_settings_v3):
+        mock_ctx.run.return_value = MagicMock(failed=False)
+        with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
+            with patch('rdeploy.tasks.set_context'):
+                with patch('rdeploy.tasks._watch_rollout') as mock_watch:
+                    upgrade(mock_ctx, 'staging', tag='1.2.3')
+        # The watcher thread is joined in upgrade()'s finally, so by the time
+        # upgrade returns the (mocked) watcher must have been invoked.
+        assert mock_watch.called
+
+    def test_no_progress_opt_out(self, mock_ctx, sample_settings_v3):
+        mock_ctx.run.return_value = MagicMock(failed=False)
+        with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
+            with patch('rdeploy.tasks.set_context'):
+                with patch('rdeploy.tasks._watch_rollout') as mock_watch:
+                    upgrade(mock_ctx, 'staging', tag='1.2.3', progress=False)
+        assert not mock_watch.called
+
+    def test_no_atomic_skips_progress_watcher(self, mock_ctx, sample_settings_v3):
+        mock_ctx.run.return_value = MagicMock(failed=False)
+        with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
+            with patch('rdeploy.tasks.set_context'):
+                with patch('rdeploy.tasks._watch_rollout') as mock_watch:
+                    upgrade(mock_ctx, 'staging', tag='1.2.3', atomic=False)
+        assert not mock_watch.called
+
+    def test_watcher_stopped_even_when_upgrade_fails(self, mock_ctx, sample_settings_v3):
+        mock_ctx.run.return_value = MagicMock(failed=True)
+        with patch('rdeploy.tasks.get_settings', return_value=yaml.safe_load(open(sample_settings_v3))):
+            with patch('rdeploy.tasks.set_context'):
+                with patch('rdeploy.tasks._watch_rollout') as mock_watch:
+                    with pytest.raises(SystemExit):
+                        upgrade(mock_ctx, 'staging', tag='1.2.3')
+        # The stop event handed to the watcher must be set by the finally
+        # block even on the failure path.
+        stop_event = mock_watch.call_args[0][0]
+        assert stop_event.is_set()
+
+
+class TestWatchRollout:
+    """Unit tests for the _watch_rollout polling loop.
+
+    subprocess.run is always mocked -- these tests must never touch a real
+    kubectl or cluster. The stop_event is either a real Event driven by the
+    subprocess.run side effects or a MagicMock that makes waits instant.
+    """
+
+    TABLE_V1 = ('NAME         READY   UP-TO-DATE   AVAILABLE   AGE\n'
+                'my-project   1/3     3            1           5d\n')
+    TABLE_V2 = ('NAME         READY   UP-TO-DATE   AVAILABLE   AGE\n'
+                'my-project   3/3     3            3           5d\n')
+    # Same as TABLE_V1 except the AGE column ticked over.
+    TABLE_V1_AGED = ('NAME         READY   UP-TO-DATE   AVAILABLE   AGE\n'
+                     'my-project   1/3     3            1           5d1h\n')
+
+    @staticmethod
+    def _instant_event(is_set_results):
+        """A stop-event stand-in whose waits return instantly and whose
+        is_set() runs through is_set_results then stays True."""
+        event = MagicMock()
+        event.is_set.side_effect = list(is_set_results) + [True] * 10
+        event.wait.return_value = False
+        return event
+
+    def test_prints_table_with_prefix(self, capsys):
+        from rdeploy.tasks import _watch_rollout
+        event = self._instant_event([False])
+        result = MagicMock(returncode=0, stdout=self.TABLE_V1, stderr='')
+        with patch('rdeploy.tasks.subprocess.run', return_value=result):
+            _watch_rollout(event)
+        out = capsys.readouterr().out
+        assert '[rollout] NAME' in out
+        assert '[rollout] my-project   1/3' in out
+
+    def test_unchanged_table_not_reprinted(self, capsys):
+        from rdeploy.tasks import _watch_rollout
+        event = self._instant_event([False, False])
+        result = MagicMock(returncode=0, stdout=self.TABLE_V1, stderr='')
+        with patch('rdeploy.tasks.subprocess.run', return_value=result):
+            _watch_rollout(event)
+        out = capsys.readouterr().out
+        assert out.count('my-project') == 1
+
+    def test_age_only_change_not_reprinted(self, capsys):
+        from rdeploy.tasks import _watch_rollout
+        event = self._instant_event([False, False])
+        results = [MagicMock(returncode=0, stdout=self.TABLE_V1, stderr=''),
+                   MagicMock(returncode=0, stdout=self.TABLE_V1_AGED, stderr='')]
+        with patch('rdeploy.tasks.subprocess.run', side_effect=results):
+            _watch_rollout(event)
+        out = capsys.readouterr().out
+        assert out.count('my-project') == 1
+
+    def test_changed_table_reprinted(self, capsys):
+        from rdeploy.tasks import _watch_rollout
+        event = self._instant_event([False, False])
+        results = [MagicMock(returncode=0, stdout=self.TABLE_V1, stderr=''),
+                   MagicMock(returncode=0, stdout=self.TABLE_V2, stderr='')]
+        with patch('rdeploy.tasks.subprocess.run', side_effect=results):
+            _watch_rollout(event)
+        out = capsys.readouterr().out
+        assert '1/3' in out
+        assert '3/3' in out
+
+    def test_gives_up_after_repeated_kubectl_failures(self, capsys):
+        from rdeploy.tasks import _watch_rollout
+        event = self._instant_event([False] * 10)
+        result = MagicMock(returncode=1, stdout='',
+                           stderr='error: current-context is not set\n')
+        with patch('rdeploy.tasks.subprocess.run',
+                   return_value=result) as mock_run:
+            _watch_rollout(event)
+        out = capsys.readouterr().out
+        assert 'progress display unavailable' in out
+        assert 'current-context is not set' in out
+        assert mock_run.call_count == 3
+
+    def test_transient_failure_recovers(self, capsys):
+        from rdeploy.tasks import _watch_rollout
+        event = self._instant_event([False, False, False])
+        results = [MagicMock(returncode=1, stdout='', stderr='boom\n'),
+                   MagicMock(returncode=0, stdout=self.TABLE_V1, stderr=''),
+                   MagicMock(returncode=1, stdout='', stderr='boom\n')]
+        with patch('rdeploy.tasks.subprocess.run', side_effect=results):
+            _watch_rollout(event)
+        out = capsys.readouterr().out
+        assert 'my-project' in out
+        assert 'progress display unavailable' not in out
+
+    def test_missing_kubectl_reports_unavailable(self, capsys):
+        from rdeploy.tasks import _watch_rollout
+        event = self._instant_event([False])
+        with patch('rdeploy.tasks.subprocess.run',
+                   side_effect=FileNotFoundError('kubectl')):
+            _watch_rollout(event)  # must not raise
+        out = capsys.readouterr().out
+        assert 'progress display unavailable' in out
+
+    def test_preset_stop_event_polls_nothing(self):
+        import threading
+        from rdeploy.tasks import _watch_rollout
+        event = threading.Event()
+        event.set()
+        with patch('rdeploy.tasks.subprocess.run') as mock_run:
+            _watch_rollout(event)
+        assert not mock_run.called
 
 
 class TestGitRelease:

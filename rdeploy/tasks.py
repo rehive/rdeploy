@@ -372,85 +372,56 @@ def install(ctx, config):
             echo=True)
 
 
-def _watch_rollout(config_dict, timeout, stop_event, procs):
-    """Stream live `kubectl rollout status` progress for every deployment in
-    the namespace (chart-agnostic).
+def _watch_rollout(stop_event, poll_interval=5):
+    """Print the `kubectl get deployments` status table while the atomic helm
+    upgrade waits, so you can see READY/UP-TO-DATE/AVAILABLE progress instead
+    of a silent wait.
 
-    Runs in a background daemon thread purely to give feedback while the
-    blocking, atomic helm upgrade waits. It is fully decoupled from the
-    upgrade: its stdout is informational only and its exit codes are ignored.
-    The whole body is wrapped in a broad except so a broken watcher (kubectl
-    missing, permission error, rollback churn) can never raise into the main
-    flow or change the exit code.
+    Runs in a background daemon thread and is fully decoupled from the
+    upgrade: its output is informational only and its exit codes are ignored.
+    Polling the deployments table (rather than streaming `kubectl rollout
+    status`) means every poll reflects the cluster's current state -- no
+    generation tracking, deployments created by the upgrade itself show up
+    automatically, and there are no long-lived child processes to tear down:
+    each poll is one short, bounded `kubectl get`. The table is only
+    reprinted when something other than AGE changes.
 
-    set_context() has already pointed kubectl at the right context AND
-    namespace, so a plain `kubectl get deploy` lists exactly the deployments
-    in the release's namespace without needing a chart-specific label; this
-    works regardless of how a given chart labels its deployments.
-    Tradeoff: in a namespace shared by several releases this also surfaces
-    sibling releases' deployments, which is harmless -- they are already
-    stable, so their rollout status returns immediately.
+    set_context() has already pointed kubectl at the right context and
+    namespace. The whole body is wrapped in a broad except so a broken
+    watcher (kubectl missing, permission error) can never raise into the
+    main flow or change the exit code.
     """
-    reader_threads = []
+    last_key = None
+    failures = 0
     try:
-        # Discover every deployment in the current namespace. Give freshly
-        # created deployments a short grace period to appear (the namespace may
-        # be momentarily empty); one scan after the grace is enough, since a
-        # helm release's deployments exist very quickly.
-        deployments = []
-        for _ in range(10):
-            if stop_event.is_set():
-                return
-            found = subprocess.run(['kubectl', 'get', 'deploy', '-o', 'name'],
-                                   capture_output=True, text=True)
-            deployments = [d.strip() for d in found.stdout.splitlines()
-                           if d.strip()]
-            if deployments:
-                break
-            stop_event.wait(1)
-
-        if not deployments:
-            print('[rollout] no deployments found in namespace;'
-                  ' progress display unavailable.', flush=True)
-            return
-
-        def _stream(name, proc):
-            # One reader thread per deployment so all rollouts stream
-            # concurrently and their output interleaves; the deployment name
-            # prefix keeps the streams distinguishable.
-            try:
-                for line in iter(proc.stdout.readline, ''):
-                    if stop_event.is_set():
-                        break
-                    line = line.rstrip()
-                    if line:
-                        print('[rollout {name}] {line}'
-                              .format(name=name, line=line), flush=True)
-                proc.stdout.close()
-            except Exception:
-                pass
-
-        for dep in deployments:
-            if stop_event.is_set():
-                break
-            name = dep.split('/')[-1]
-            # --timeout ties each watcher to the helm --timeout so it can never
-            # outlive helm; termination in the caller's finally is the real
-            # guarantee. Every Popen is tracked in procs so nothing is orphaned.
-            proc = subprocess.Popen(['kubectl', 'rollout', 'status', dep,
-                                     '--timeout', timeout],
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True)
-            procs.append(proc)
-            reader = threading.Thread(target=_stream, args=(name, proc),
-                                      daemon=True)
-            reader_threads.append(reader)
-            reader.start()
-
-        # Wait for the concurrent readers to drain; they exit once each rollout
-        # finishes or when the caller's finally terminates the procs.
-        for reader in reader_threads:
-            reader.join()
+        while not stop_event.is_set():
+            status = subprocess.run(['kubectl', 'get', 'deployments',
+                                     '--request-timeout=10s'],
+                                    capture_output=True, text=True)
+            if status.returncode == 0:
+                failures = 0
+                # Compare without the last (AGE) column so the ticking age of
+                # young deployments doesn't reprint an otherwise unchanged
+                # table.
+                key = '\n'.join(' '.join(line.split()[:-1])
+                                for line in status.stdout.splitlines())
+                if key != last_key:
+                    last_key = key
+                    for line in status.stdout.splitlines():
+                        print('[rollout] {line}'.format(line=line), flush=True)
+            else:
+                # Tolerate transient API errors, but give up (quietly, with a
+                # single note) if kubectl keeps failing.
+                failures += 1
+                if failures >= 3:
+                    error = (status.stderr or '').strip().splitlines()
+                    print('[rollout] progress display unavailable: {err}'
+                          .format(err=error[0] if error else
+                                  'kubectl exited with code {rc}'
+                                  .format(rc=status.returncode)),
+                          flush=True)
+                    return
+            stop_event.wait(poll_interval)
     except Exception as err:
         print('[rollout] progress display unavailable: {err}'.format(err=err),
               flush=True)
@@ -466,11 +437,11 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
     task exits with an error. Use --no-atomic to restore the old
     fire-and-forget behaviour, and --timeout to change how long helm waits.
 
-    While the atomic upgrade waits, a live rollout progress display streams
-    `kubectl rollout status` output (prefixed with [rollout]) so you can see
-    per-deployment progress instead of a silent wait. This is purely
-    informational and never affects the result; use --no-progress to disable
-    it.
+    While the atomic upgrade waits, a live progress display polls
+    `kubectl get deployments` and prints the status table (prefixed with
+    [rollout]) whenever it changes, so you can see READY/UP-TO-DATE/AVAILABLE
+    progress instead of a silent wait. This is purely informational and never
+    affects the result; use --no-progress to disable it.
     """
 
     settings_dict = get_settings()
@@ -494,15 +465,13 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
     # immediately) and progress display is enabled.
     show_progress = atomic and progress
     stop_event = threading.Event()
-    procs = []
     watcher = None
     if show_progress:
-        watcher = threading.Thread(target=_watch_rollout,
-                                   args=(config_dict, timeout, stop_event, procs),
+        watcher = threading.Thread(target=_watch_rollout, args=(stop_event,),
                                    daemon=True)
 
     # The helm call below is the sole source of truth for success/failure/
-    # rollback. The watcher runs concurrently and is torn down in finally
+    # rollback. The watcher runs concurrently and is stopped in finally
     # whether helm succeeds or rolls back; its output never influences result.
     try:
         if watcher is not None:
@@ -522,13 +491,10 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
                          echo=True, warn=True)
     finally:
         stop_event.set()
-        for proc in procs:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
         if watcher is not None:
-            watcher.join(timeout=5)
+            # A poll in flight finishes within kubectl's --request-timeout,
+            # so this join is bounded and leaves no child processes behind.
+            watcher.join(timeout=15)
 
     if result.failed:
         if atomic:

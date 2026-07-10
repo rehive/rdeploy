@@ -2,9 +2,9 @@
 Version 0.4.0, Fri 10 Jul 2026
 ===============================
 - `rdeploy upgrade` now shows live rollout progress while the atomic helm
-  upgrade waits: it streams `kubectl rollout status` output (prefixed with
-  `[rollout <deployment>]`) for every deployment in the namespace instead of
-  blocking silently.
+  upgrade waits: it polls `kubectl get deployments` and prints the status
+  table (prefixed with `[rollout]`) whenever it changes, instead of blocking
+  silently.
 - Added `--no-progress` to disable the live progress display. The display is
   purely informational and runs concurrently with helm; helm `--atomic`
   remains the sole arbiter of success, failure and rollback, and the watcher
