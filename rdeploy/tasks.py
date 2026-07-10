@@ -384,11 +384,12 @@ def _watch_rollout(config_dict, timeout, stop_event, procs):
     """
     try:
         release = config_dict['project_name']
-        # Standard helm release label. The rehive-service chart could not be
-        # inspected from here, so we discover deployments at runtime and fall
-        # back to the release's primary deployment if the selector matches
-        # nothing, rather than trusting a hardcoded label.
-        selector = 'app.kubernetes.io/instance={release}'.format(release=release)
+        # The rehive-service chart sets no app.kubernetes.io/instance label; it
+        # stamps the release name on app.kubernetes.io/name for both the server
+        # and worker deployments, so this selector catches the whole release.
+        # We still discover at runtime and fall back to the release's primary
+        # deployment if nothing matches, rather than trusting a hardcoded label.
+        selector = 'app.kubernetes.io/name={release}'.format(release=release)
 
         # Give the new ReplicaSets a short grace period to appear.
         deployments = []
