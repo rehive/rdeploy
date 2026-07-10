@@ -373,60 +373,84 @@ def install(ctx, config):
 
 
 def _watch_rollout(config_dict, timeout, stop_event, procs):
-    """Stream live `kubectl rollout status` progress for the release's deployments.
+    """Stream live `kubectl rollout status` progress for every deployment in
+    the namespace (chart-agnostic).
 
     Runs in a background daemon thread purely to give feedback while the
     blocking, atomic helm upgrade waits. It is fully decoupled from the
     upgrade: its stdout is informational only and its exit codes are ignored.
     The whole body is wrapped in a broad except so a broken watcher (kubectl
-    missing, wrong label, permission error, rollback churn) can never raise
-    into the main flow or change the exit code.
-    """
-    try:
-        release = config_dict['project_name']
-        # The rehive-service chart sets no app.kubernetes.io/instance label; it
-        # stamps the release name on app.kubernetes.io/name for both the server
-        # and worker deployments, so this selector catches the whole release.
-        # We still discover at runtime and fall back to the release's primary
-        # deployment if nothing matches, rather than trusting a hardcoded label.
-        selector = 'app.kubernetes.io/name={release}'.format(release=release)
+    missing, permission error, rollback churn) can never raise into the main
+    flow or change the exit code.
 
-        # Give the new ReplicaSets a short grace period to appear.
+    set_context() has already pointed kubectl at the right context AND
+    namespace, so a plain `kubectl get deploy` lists exactly the deployments
+    in the release's namespace without needing a chart-specific label; this
+    works regardless of how a given chart labels its deployments.
+    Tradeoff: in a namespace shared by several releases this also surfaces
+    sibling releases' deployments, which is harmless -- they are already
+    stable, so their rollout status returns immediately.
+    """
+    reader_threads = []
+    try:
+        # Discover every deployment in the current namespace. Give freshly
+        # created deployments a short grace period to appear (the namespace may
+        # be momentarily empty); one scan after the grace is enough, since a
+        # helm release's deployments exist very quickly.
         deployments = []
         for _ in range(10):
             if stop_event.is_set():
                 return
-            found = subprocess.run(['kubectl', 'get', 'deploy',
-                                    '-l', selector, '-o', 'name'],
+            found = subprocess.run(['kubectl', 'get', 'deploy', '-o', 'name'],
                                    capture_output=True, text=True)
-            deployments = [d for d in found.stdout.split() if d]
+            deployments = [d.strip() for d in found.stdout.splitlines()
+                           if d.strip()]
             if deployments:
                 break
             stop_event.wait(1)
 
-        # Fall back to the deployment named after the release (see live_image)
-        # when the label selector turns up nothing.
         if not deployments:
-            deployments = ['deployment/{release}'.format(release=release)]
+            print('[rollout] no deployments found in namespace;'
+                  ' progress display unavailable.', flush=True)
+            return
+
+        def _stream(name, proc):
+            # One reader thread per deployment so all rollouts stream
+            # concurrently and their output interleaves; the deployment name
+            # prefix keeps the streams distinguishable.
+            try:
+                for line in iter(proc.stdout.readline, ''):
+                    if stop_event.is_set():
+                        break
+                    line = line.rstrip()
+                    if line:
+                        print('[rollout {name}] {line}'
+                              .format(name=name, line=line), flush=True)
+                proc.stdout.close()
+            except Exception:
+                pass
 
         for dep in deployments:
             if stop_event.is_set():
-                return
+                break
+            name = dep.split('/')[-1]
             # --timeout ties each watcher to the helm --timeout so it can never
             # outlive helm; termination in the caller's finally is the real
-            # guarantee.
+            # guarantee. Every Popen is tracked in procs so nothing is orphaned.
             proc = subprocess.Popen(['kubectl', 'rollout', 'status', dep,
                                      '--timeout', timeout],
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True)
             procs.append(proc)
-            for line in iter(proc.stdout.readline, ''):
-                if stop_event.is_set():
-                    break
-                line = line.rstrip()
-                if line:
-                    print('[rollout] {line}'.format(line=line), flush=True)
-            proc.stdout.close()
+            reader = threading.Thread(target=_stream, args=(name, proc),
+                                      daemon=True)
+            reader_threads.append(reader)
+            reader.start()
+
+        # Wait for the concurrent readers to drain; they exit once each rollout
+        # finishes or when the caller's finally terminates the procs.
+        for reader in reader_threads:
+            reader.join()
     except Exception as err:
         print('[rollout] progress display unavailable: {err}'.format(err=err),
               flush=True)
