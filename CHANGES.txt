@@ -1,4 +1,20 @@
 ----
+Version 0.4.0, Fri 10 Jul 2026
+===============================
+- `rdeploy upgrade` now shows live rollout progress while the atomic helm
+  upgrade waits: it polls `kubectl get pods` and shows the pod status table
+  (prefixed with `[rollout]`), so you can watch pods being created, pulled,
+  started and terminated (including helm hook pods such as migration jobs)
+  instead of blocking silently. On a terminal the table is pinned to the
+  bottom of the screen and updates in place while helm's output scrolls
+  above it; on a non-TTY (e.g. CI logs) it prints the table once, then any
+  row that changes.
+- Added `--no-progress` to disable the live progress display. The display is
+  purely informational and runs concurrently with helm; helm `--atomic`
+  remains the sole arbiter of success, failure and rollback, and the watcher
+  never affects the command's exit code.
+
+----
 Version 0.3.0, Thu 09 Jul 2026
 ===============================
 - `rdeploy upgrade` now runs helm with `--atomic` by default: helm waits for
