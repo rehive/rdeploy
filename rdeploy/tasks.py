@@ -3,6 +3,8 @@ import tarfile
 import zipfile
 import urllib.request
 import io
+import threading
+import subprocess
 
 from invoke import task
 import semver
@@ -370,8 +372,67 @@ def install(ctx, config):
             echo=True)
 
 
+def _watch_rollout(config_dict, timeout, stop_event, procs):
+    """Stream live `kubectl rollout status` progress for the release's deployments.
+
+    Runs in a background daemon thread purely to give feedback while the
+    blocking, atomic helm upgrade waits. It is fully decoupled from the
+    upgrade: its stdout is informational only and its exit codes are ignored.
+    The whole body is wrapped in a broad except so a broken watcher (kubectl
+    missing, wrong label, permission error, rollback churn) can never raise
+    into the main flow or change the exit code.
+    """
+    try:
+        release = config_dict['project_name']
+        # Standard helm release label. The rehive-service chart could not be
+        # inspected from here, so we discover deployments at runtime and fall
+        # back to the release's primary deployment if the selector matches
+        # nothing, rather than trusting a hardcoded label.
+        selector = 'app.kubernetes.io/instance={release}'.format(release=release)
+
+        # Give the new ReplicaSets a short grace period to appear.
+        deployments = []
+        for _ in range(10):
+            if stop_event.is_set():
+                return
+            found = subprocess.run(['kubectl', 'get', 'deploy',
+                                    '-l', selector, '-o', 'name'],
+                                   capture_output=True, text=True)
+            deployments = [d for d in found.stdout.split() if d]
+            if deployments:
+                break
+            stop_event.wait(1)
+
+        # Fall back to the deployment named after the release (see live_image)
+        # when the label selector turns up nothing.
+        if not deployments:
+            deployments = ['deployment/{release}'.format(release=release)]
+
+        for dep in deployments:
+            if stop_event.is_set():
+                return
+            # --timeout ties each watcher to the helm --timeout so it can never
+            # outlive helm; termination in the caller's finally is the real
+            # guarantee.
+            proc = subprocess.Popen(['kubectl', 'rollout', 'status', dep,
+                                     '--timeout', timeout],
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True)
+            procs.append(proc)
+            for line in iter(proc.stdout.readline, ''):
+                if stop_event.is_set():
+                    break
+                line = line.rstrip()
+                if line:
+                    print('[rollout] {line}'.format(line=line), flush=True)
+            proc.stdout.close()
+    except Exception as err:
+        print('[rollout] progress display unavailable: {err}'.format(err=err),
+              flush=True)
+
+
 @task
-def upgrade(ctx, config, tag, atomic=True, timeout='15m'):
+def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
     """
     Upgrades kubernetes deployment
 
@@ -379,6 +440,12 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m'):
     complete and rolls back to the previous release if it fails, and the
     task exits with an error. Use --no-atomic to restore the old
     fire-and-forget behaviour, and --timeout to change how long helm waits.
+
+    While the atomic upgrade waits, a live rollout progress display streams
+    `kubectl rollout status` output (prefixed with [rollout]) so you can see
+    per-deployment progress instead of a silent wait. This is purely
+    informational and never affects the result; use --no-progress to disable
+    it.
     """
 
     settings_dict = get_settings()
@@ -398,18 +465,45 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m'):
 
     atomic_flags = ' --atomic --timeout {timeout}'.format(timeout=timeout) if atomic else ''
 
-    result = ctx.run('{helm_bin} upgrade {project_name} '
-                     '--values {helm_values_path} '
-                     '--set image.tag={version} '
-                     '--version {helm_chart_version}{atomic_flags} {helm_chart}'
-                     .format(helm_bin=helm_bin,
-                             project_name=config_dict['project_name'],
-                             helm_chart=helm_chart,
-                             helm_values_path=config_dict['helm_values_path'],
-                             version=tag,
-                             helm_chart_version=config_dict['helm_chart_version'],
-                             atomic_flags=atomic_flags),
-                     echo=True, warn=True)
+    # Only watch when there is an atomic wait to watch (--no-atomic returns
+    # immediately) and progress display is enabled.
+    show_progress = atomic and progress
+    stop_event = threading.Event()
+    procs = []
+    watcher = None
+    if show_progress:
+        watcher = threading.Thread(target=_watch_rollout,
+                                   args=(config_dict, timeout, stop_event, procs),
+                                   daemon=True)
+
+    # The helm call below is the sole source of truth for success/failure/
+    # rollback. The watcher runs concurrently and is torn down in finally
+    # whether helm succeeds or rolls back; its output never influences result.
+    try:
+        if watcher is not None:
+            watcher.start()
+
+        result = ctx.run('{helm_bin} upgrade {project_name} '
+                         '--values {helm_values_path} '
+                         '--set image.tag={version} '
+                         '--version {helm_chart_version}{atomic_flags} {helm_chart}'
+                         .format(helm_bin=helm_bin,
+                                 project_name=config_dict['project_name'],
+                                 helm_chart=helm_chart,
+                                 helm_values_path=config_dict['helm_values_path'],
+                                 version=tag,
+                                 helm_chart_version=config_dict['helm_chart_version'],
+                                 atomic_flags=atomic_flags),
+                         echo=True, warn=True)
+    finally:
+        stop_event.set()
+        for proc in procs:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        if watcher is not None:
+            watcher.join(timeout=5)
 
     if result.failed:
         if atomic:
