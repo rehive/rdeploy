@@ -3,7 +3,9 @@ import tarfile
 import zipfile
 import urllib.request
 import io
+import shutil
 import threading
+import time
 import subprocess
 
 from invoke import task
@@ -372,24 +374,106 @@ def install(ctx, config):
             echo=True)
 
 
-def _watch_rollout(stop_event, poll_interval=2):
-    """Print live `kubectl get deployments` progress while the atomic helm
-    upgrade waits, so you can see READY/UP-TO-DATE/AVAILABLE progress instead
-    of a silent wait.
+class _RolloutDisplay:
+    """Pin a live status region to the bottom of a TTY while other output
+    scrolls above it.
 
-    Prints the full table once as a baseline, then only the rows that change
-    (ignoring the ticking AGE column), so the output stays quiet unless a
-    deployment is actually transitioning. Append-only lines are used instead
-    of an in-place redraw because helm shares the same stdout and can print
-    at any moment.
+    The cursor arithmetic only stays consistent if every terminal write goes
+    through this object, so helm's stdout/stderr are routed here as well (via
+    invoke's out_stream/err_stream) and rendered above the pinned region.
+    Uses plain ANSI: ESC[nA moves the cursor up n lines, ESC[K clears to the
+    end of the line, ESC[J clears to the end of the screen.
+    """
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._lock = threading.Lock()
+        self._region = []
+        self._drawn = 0
+
+    def log(self, text):
+        """Write scrolling output (complete lines) above the status region."""
+        with self._lock:
+            self._render(log_lines=text.splitlines())
+
+    def update(self, lines):
+        """Replace the pinned status region with the given lines."""
+        with self._lock:
+            self._region = list(lines)
+            self._render()
+
+    def _render(self, log_lines=()):
+        # Cursor rests at column 0 just below the region; move to the
+        # region's top, write the scrolling lines (overwriting old region
+        # rows), redraw the region beneath them, and clear any leftover rows
+        # from a previously taller region.
+        if self._drawn:
+            self._stream.write('\x1b[{n}A'.format(n=self._drawn))
+        for line in log_lines:
+            self._stream.write(line + '\x1b[K\n')
+        # Region lines must not wrap or the cursor-up count breaks, so
+        # truncate them to the terminal width. Scrolling lines may wrap
+        # freely: they end up above the region either way.
+        width = shutil.get_terminal_size((120, 24)).columns
+        for line in self._region:
+            self._stream.write(line[:width - 1] + '\x1b[K\n')
+        self._stream.write('\x1b[J')
+        self._stream.flush()
+        self._drawn = len(self._region)
+
+
+class _LogStream(io.TextIOBase):
+    """File-like stream for invoke's out_stream/err_stream that forwards
+    complete lines to a _RolloutDisplay, buffering partial lines so the
+    display's line accounting stays exact."""
+
+    def __init__(self, display):
+        self._display = display
+        self._buf = ''
+
+    def write(self, s):
+        self._buf += s
+        if '\n' in self._buf:
+            complete, self._buf = self._buf.rsplit('\n', 1)
+            self._display.log(complete + '\n')
+        return len(s)
+
+    def flush(self):
+        pass
+
+    def drain(self):
+        """Emit any trailing partial line (call once the command is done)."""
+        if self._buf:
+            self._display.log(self._buf + '\n')
+            self._buf = ''
+
+
+def _watch_rollout(stop_event, poll_interval=2, display=None):
+    """Show live `kubectl get pods` progress while the atomic helm upgrade
+    waits, so you can see pods being created, pulled, started and terminated
+    instead of a silent wait.
+
+    Pods (not deployments) are polled because for single-replica services the
+    deployment counters are blind to almost the whole rollout: while the new
+    pod is created and pulls its image the row reads 1/1, identical to steady
+    state, and only blinks to 2/1 for the second or two between the new pod
+    becoming ready and the old one being deleted. Pod rows change visibly for
+    the entire rollout (ContainerCreating during the pull, Running,
+    Terminating, CrashLoopBackOff on a bad release) and also surface helm
+    hook pods such as migration jobs.
+
+    With a display (stdout is a TTY) the whole pod table is pinned to the
+    bottom of the terminal and updated in place every poll, while helm's own
+    output scrolls above it. Without one (non-TTY, e.g. CI logs) it prints
+    append-only lines: the table once as a baseline, then only rows whose
+    READY/STATUS/RESTARTS change (ignoring the ticking AGE and restart-age
+    columns).
 
     Runs in a background daemon thread and is fully decoupled from the
     upgrade: its output is informational only and its exit codes are ignored.
-    Polling the deployments table (rather than streaming `kubectl rollout
-    status`) means every poll reflects the cluster's current state -- no
-    generation tracking, deployments created by the upgrade itself show up
-    automatically, and there are no long-lived child processes to tear down:
-    each poll is one short, bounded `kubectl get`.
+    Every poll reflects the cluster's current state -- pods created by the
+    upgrade itself show up automatically, and there are no long-lived child
+    processes to tear down: each poll is one short, bounded `kubectl get`.
 
     set_context() has already pointed kubectl at the right context and
     namespace. The whole body is wrapped in a broad except so a broken
@@ -399,47 +483,65 @@ def _watch_rollout(stop_event, poll_interval=2):
     last_rows = {}
     header_printed = False
     failures = 0
+
+    def _note(message):
+        line = '[rollout] {message}'.format(message=message)
+        if display is not None:
+            display.update([])
+            display.log(line + '\n')
+        else:
+            print(line, flush=True)
+
     try:
         while not stop_event.is_set():
-            status = subprocess.run(['kubectl', 'get', 'deployments',
+            status = subprocess.run(['kubectl', 'get', 'pods',
                                      '--request-timeout=10s'],
                                     capture_output=True, text=True)
             if status.returncode == 0:
                 failures = 0
                 lines = status.stdout.splitlines()
-                to_print = []
-                if lines and not header_printed:
-                    header_printed = True
-                    to_print.append(lines[0])
-                for row in lines[1:]:
-                    fields = row.split()
-                    if not fields:
-                        continue
-                    # Compare without the last (AGE) column so the ticking
-                    # age of young deployments doesn't reprint an otherwise
-                    # unchanged row.
-                    name, key = fields[0], ' '.join(fields[:-1])
-                    if last_rows.get(name) != key:
-                        last_rows[name] = key
-                        to_print.append(row)
-                for line in to_print:
-                    print('[rollout] {line}'.format(line=line), flush=True)
+                if display is not None:
+                    # Live region: redraw the whole current table in place.
+                    region = ['[rollout] {line}'.format(line=line)
+                              for line in lines]
+                    if region:
+                        region.append('[rollout] (live view, updated {ts})'
+                                      .format(ts=time.strftime('%H:%M:%S')))
+                    display.update(region)
+                else:
+                    # Append-only: baseline table once, then changed rows.
+                    to_print = []
+                    if lines and not header_printed:
+                        header_printed = True
+                        to_print.append(lines[0])
+                    for row in lines[1:]:
+                        fields = row.split()
+                        if not fields:
+                            continue
+                        # Compare only NAME READY STATUS RESTARTS so the
+                        # ticking AGE and the '(Xm ago)' restart annotation
+                        # don't reprint an otherwise unchanged row.
+                        name, key = fields[0], ' '.join(fields[:4])
+                        if last_rows.get(name) != key:
+                            last_rows[name] = key
+                            to_print.append(row)
+                    for line in to_print:
+                        print('[rollout] {line}'.format(line=line),
+                              flush=True)
             else:
                 # Tolerate transient API errors, but give up (quietly, with a
                 # single note) if kubectl keeps failing.
                 failures += 1
                 if failures >= 3:
                     error = (status.stderr or '').strip().splitlines()
-                    print('[rollout] progress display unavailable: {err}'
+                    _note('progress display unavailable: {err}'
                           .format(err=error[0] if error else
                                   'kubectl exited with code {rc}'
-                                  .format(rc=status.returncode)),
-                          flush=True)
+                                  .format(rc=status.returncode)))
                     return
             stop_event.wait(poll_interval)
     except Exception as err:
-        print('[rollout] progress display unavailable: {err}'.format(err=err),
-              flush=True)
+        _note('progress display unavailable: {err}'.format(err=err))
 
 
 @task
@@ -453,11 +555,13 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
     fire-and-forget behaviour, and --timeout to change how long helm waits.
 
     While the atomic upgrade waits, a live progress display polls
-    `kubectl get deployments` and prints the status table once, then any row
-    that changes (prefixed with [rollout]), so you can see
-    READY/UP-TO-DATE/AVAILABLE progress instead of a silent wait. This is
-    purely informational and never affects the result; use --no-progress to
-    disable it.
+    `kubectl get pods` and shows the pod status table (prefixed with
+    [rollout]), so you can watch pods being created, pulled, started and
+    terminated instead of a silent wait. On a terminal the table is pinned
+    to the bottom of the screen and updates in place while helm's output
+    scrolls above it; on a non-TTY it prints the table once, then any row
+    that changes. This is purely informational and never affects the
+    result; use --no-progress to disable it.
     """
 
     settings_dict = get_settings()
@@ -482,9 +586,31 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
     show_progress = atomic and progress
     stop_event = threading.Event()
     watcher = None
+    display = None
+    run_streams = {}
     if show_progress:
+        if sys.stdout.isatty():
+            # Live view: the pod table is pinned to the bottom of the
+            # terminal and helm's output scrolls above it. Helm's streams
+            # must be routed through the display for the cursor arithmetic
+            # to hold, so hand invoke our own out/err streams.
+            display = _RolloutDisplay(sys.stdout)
+            run_streams = {'out_stream': _LogStream(display),
+                           'err_stream': _LogStream(display)}
         watcher = threading.Thread(target=_watch_rollout, args=(stop_event,),
-                                   daemon=True)
+                                   kwargs={'display': display}, daemon=True)
+
+    helm_command = ('{helm_bin} upgrade {project_name} '
+                    '--values {helm_values_path} '
+                    '--set image.tag={version} '
+                    '--version {helm_chart_version}{atomic_flags} {helm_chart}'
+                    .format(helm_bin=helm_bin,
+                            project_name=config_dict['project_name'],
+                            helm_chart=helm_chart,
+                            helm_values_path=config_dict['helm_values_path'],
+                            version=tag,
+                            helm_chart_version=config_dict['helm_chart_version'],
+                            atomic_flags=atomic_flags))
 
     # The helm call below is the sole source of truth for success/failure/
     # rollback. The watcher runs concurrently and is stopped in finally
@@ -493,24 +619,21 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
         if watcher is not None:
             watcher.start()
 
-        result = ctx.run('{helm_bin} upgrade {project_name} '
-                         '--values {helm_values_path} '
-                         '--set image.tag={version} '
-                         '--version {helm_chart_version}{atomic_flags} {helm_chart}'
-                         .format(helm_bin=helm_bin,
-                                 project_name=config_dict['project_name'],
-                                 helm_chart=helm_chart,
-                                 helm_values_path=config_dict['helm_values_path'],
-                                 version=tag,
-                                 helm_chart_version=config_dict['helm_chart_version'],
-                                 atomic_flags=atomic_flags),
-                         echo=True, warn=True)
+        if display is not None:
+            # invoke's echo writes straight to stdout, which would race with
+            # the display's cursor arithmetic; echo through the display
+            # instead (same bold formatting as invoke).
+            display.log('\033[1;37m{cmd}\033[0m\n'.format(cmd=helm_command))
+        result = ctx.run(helm_command, echo=display is None, warn=True,
+                         **run_streams)
     finally:
         stop_event.set()
         if watcher is not None:
             # A poll in flight finishes within kubectl's --request-timeout,
             # so this join is bounded and leaves no child processes behind.
             watcher.join(timeout=15)
+        for stream in run_streams.values():
+            stream.drain()
 
     if result.failed:
         if atomic:

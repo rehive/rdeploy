@@ -377,13 +377,13 @@ class TestWatchRollout:
     subprocess.run side effects or a MagicMock that makes waits instant.
     """
 
-    TABLE_V1 = ('NAME         READY   UP-TO-DATE   AVAILABLE   AGE\n'
-                'my-project   1/3     3            1           5d\n')
-    TABLE_V2 = ('NAME         READY   UP-TO-DATE   AVAILABLE   AGE\n'
-                'my-project   3/3     3            3           5d\n')
+    TABLE_V1 = ('NAME               READY   STATUS              RESTARTS   AGE\n'
+                'my-project-abc12   0/1     ContainerCreating   0          2s\n')
+    TABLE_V2 = ('NAME               READY   STATUS    RESTARTS   AGE\n'
+                'my-project-abc12   1/1     Running   0          30s\n')
     # Same as TABLE_V1 except the AGE column ticked over.
-    TABLE_V1_AGED = ('NAME         READY   UP-TO-DATE   AVAILABLE   AGE\n'
-                     'my-project   1/3     3            1           5d1h\n')
+    TABLE_V1_AGED = ('NAME               READY   STATUS              RESTARTS   AGE\n'
+                     'my-project-abc12   0/1     ContainerCreating   0          4s\n')
 
     @staticmethod
     def _instant_event(is_set_results):
@@ -402,7 +402,7 @@ class TestWatchRollout:
             _watch_rollout(event)
         out = capsys.readouterr().out
         assert '[rollout] NAME' in out
-        assert '[rollout] my-project   1/3' in out
+        assert '[rollout] my-project-abc12   0/1' in out
 
     def test_unchanged_table_not_reprinted(self, capsys):
         from rdeploy.tasks import _watch_rollout
@@ -423,6 +423,22 @@ class TestWatchRollout:
         out = capsys.readouterr().out
         assert out.count('my-project') == 1
 
+    def test_restart_age_annotation_change_not_reprinted(self, capsys):
+        from rdeploy.tasks import _watch_rollout
+        # kubectl renders restarts as '2 (3m ago)'; only the '(3m ago)' part
+        # ticking must not reprint the row.
+        table_a = ('NAME               READY   STATUS    RESTARTS      AGE\n'
+                   'my-project-abc12   1/1     Running   2 (3m ago)    5d\n')
+        table_b = ('NAME               READY   STATUS    RESTARTS      AGE\n'
+                   'my-project-abc12   1/1     Running   2 (4m ago)    5d\n')
+        event = self._instant_event([False, False])
+        results = [MagicMock(returncode=0, stdout=table_a, stderr=''),
+                   MagicMock(returncode=0, stdout=table_b, stderr='')]
+        with patch('rdeploy.tasks.subprocess.run', side_effect=results):
+            _watch_rollout(event)
+        out = capsys.readouterr().out
+        assert out.count('my-project') == 1
+
     def test_changed_row_reprinted_without_header(self, capsys):
         from rdeploy.tasks import _watch_rollout
         event = self._instant_event([False, False])
@@ -431,44 +447,44 @@ class TestWatchRollout:
         with patch('rdeploy.tasks.subprocess.run', side_effect=results):
             _watch_rollout(event)
         out = capsys.readouterr().out
-        assert '1/3' in out
-        assert '3/3' in out
+        assert 'ContainerCreating' in out
+        assert 'Running' in out
         # The header is a one-time baseline; changes print only the row.
         assert out.count('NAME') == 1
 
     def test_only_changed_rows_reprinted(self, capsys):
         from rdeploy.tasks import _watch_rollout
-        table_v1 = ('NAME             READY   UP-TO-DATE   AVAILABLE   AGE\n'
-                    'scheduler        1/1     1            1           2y\n'
-                    'worker-general   1/1     1            1           2y\n')
-        table_v2 = ('NAME             READY   UP-TO-DATE   AVAILABLE   AGE\n'
-                    'scheduler        1/1     1            1           2y\n'
-                    'worker-general   2/1     1            2           2y\n')
+        table_v1 = ('NAME               READY   STATUS    RESTARTS   AGE\n'
+                    'scheduler-abc12    1/1     Running   0          2y\n'
+                    'worker-def34       1/1     Running   0          2y\n')
+        table_v2 = ('NAME               READY   STATUS        RESTARTS   AGE\n'
+                    'scheduler-abc12    1/1     Running       0          2y\n'
+                    'worker-def34       1/1     Terminating   0          2y\n')
         event = self._instant_event([False, False])
         results = [MagicMock(returncode=0, stdout=table_v1, stderr=''),
                    MagicMock(returncode=0, stdout=table_v2, stderr='')]
         with patch('rdeploy.tasks.subprocess.run', side_effect=results):
             _watch_rollout(event)
         out = capsys.readouterr().out
-        # scheduler never changed: baseline only. worker-general changed once.
-        assert out.count('scheduler') == 1
-        assert out.count('worker-general') == 2
-        assert '2/1' in out
+        # scheduler pod never changed: baseline only. worker changed once.
+        assert out.count('scheduler-abc12') == 1
+        assert out.count('worker-def34') == 2
+        assert 'Terminating' in out
 
-    def test_deployment_created_mid_upgrade_appears(self, capsys):
+    def test_pod_created_mid_upgrade_appears(self, capsys):
         from rdeploy.tasks import _watch_rollout
-        table_v1 = ('NAME        READY   UP-TO-DATE   AVAILABLE   AGE\n'
-                    'scheduler   1/1     1            1           2y\n')
-        table_v2 = ('NAME         READY   UP-TO-DATE   AVAILABLE   AGE\n'
-                    'new-worker   0/1     1            0           2s\n'
-                    'scheduler    1/1     1            1           2y\n')
+        table_v1 = ('NAME              READY   STATUS    RESTARTS   AGE\n'
+                    'scheduler-abc12   1/1     Running   0          2y\n')
+        table_v2 = ('NAME               READY   STATUS              RESTARTS   AGE\n'
+                    'scheduler-abc12    1/1     Running             0          2y\n'
+                    'scheduler-xyz99    0/1     ContainerCreating   0          2s\n')
         event = self._instant_event([False, False])
         results = [MagicMock(returncode=0, stdout=table_v1, stderr=''),
                    MagicMock(returncode=0, stdout=table_v2, stderr='')]
         with patch('rdeploy.tasks.subprocess.run', side_effect=results):
             _watch_rollout(event)
         out = capsys.readouterr().out
-        assert 'new-worker' in out
+        assert 'scheduler-xyz99' in out
 
     def test_gives_up_after_repeated_kubectl_failures(self, capsys):
         from rdeploy.tasks import _watch_rollout
@@ -512,6 +528,123 @@ class TestWatchRollout:
         with patch('rdeploy.tasks.subprocess.run') as mock_run:
             _watch_rollout(event)
         assert not mock_run.called
+
+    def test_display_mode_updates_region_with_full_table(self):
+        from rdeploy.tasks import _watch_rollout
+        event = self._instant_event([False, False])
+        results = [MagicMock(returncode=0, stdout=self.TABLE_V1, stderr=''),
+                   MagicMock(returncode=0, stdout=self.TABLE_V2, stderr='')]
+        display = MagicMock()
+        with patch('rdeploy.tasks.subprocess.run', side_effect=results):
+            _watch_rollout(event, display=display)
+        # Every poll redraws the whole table in place -- one update per poll.
+        assert display.update.call_count == 2
+        first_region = display.update.call_args_list[0][0][0]
+        assert first_region[0].startswith('[rollout] NAME')
+        assert any('ContainerCreating' in line for line in first_region)
+        second_region = display.update.call_args_list[1][0][0]
+        assert any('Running' in line for line in second_region)
+        # Nothing is appended as scrolling output in display mode.
+        assert not display.log.called
+
+    def test_display_mode_failure_clears_region_and_logs(self):
+        from rdeploy.tasks import _watch_rollout
+        event = self._instant_event([False] * 10)
+        result = MagicMock(returncode=1, stdout='', stderr='boom\n')
+        display = MagicMock()
+        with patch('rdeploy.tasks.subprocess.run', return_value=result):
+            _watch_rollout(event, display=display)
+        display.update.assert_called_with([])
+        logged = display.log.call_args[0][0]
+        assert 'progress display unavailable' in logged
+        assert 'boom' in logged
+
+
+class TestRolloutDisplay:
+    def _stream(self):
+        import io
+
+        class Buf(io.StringIO):
+            pass
+
+        return Buf()
+
+    def test_first_update_draws_without_cursor_movement(self):
+        from rdeploy.tasks import _RolloutDisplay
+        stream = self._stream()
+        display = _RolloutDisplay(stream)
+        display.update(['line-one', 'line-two'])
+        out = stream.getvalue()
+        assert '\x1b[' + '2A' not in out  # nothing to move over yet
+        assert 'line-one\x1b[K\n' in out
+        assert 'line-two\x1b[K\n' in out
+
+    def test_second_update_moves_up_over_previous_region(self):
+        from rdeploy.tasks import _RolloutDisplay
+        stream = self._stream()
+        display = _RolloutDisplay(stream)
+        display.update(['line-one', 'line-two'])
+        stream.truncate(0)
+        stream.seek(0)
+        display.update(['line-three'])
+        out = stream.getvalue()
+        assert out.startswith('\x1b[2A')  # cursor up over the 2 old lines
+        assert 'line-three\x1b[K\n' in out
+        assert out.endswith('\x1b[J')  # old extra line cleared
+
+    def test_log_scrolls_above_region(self):
+        from rdeploy.tasks import _RolloutDisplay
+        stream = self._stream()
+        display = _RolloutDisplay(stream)
+        display.update(['region-line'])
+        stream.truncate(0)
+        stream.seek(0)
+        display.log('helm says hi\n')
+        out = stream.getvalue()
+        # Moves up over the region, writes the log line, redraws the region.
+        assert out.startswith('\x1b[1A')
+        assert out.index('helm says hi') < out.index('region-line')
+
+    def test_region_lines_truncated_to_terminal_width(self):
+        import os
+        from rdeploy.tasks import _RolloutDisplay
+        stream = self._stream()
+        display = _RolloutDisplay(stream)
+        with patch('rdeploy.tasks.shutil.get_terminal_size',
+                   return_value=os.terminal_size((20, 24))):
+            display.update(['x' * 100])
+        out = stream.getvalue()
+        assert 'x' * 19 + '\x1b[K' in out
+        assert 'x' * 20 not in out
+
+
+class TestLogStream:
+    def test_buffers_partial_lines(self):
+        from rdeploy.tasks import _LogStream
+        display = MagicMock()
+        stream = _LogStream(display)
+        stream.write('partial')
+        assert not display.log.called
+        stream.write(' line\nnext-')
+        display.log.assert_called_once_with('partial line\n')
+        stream.drain()
+        assert display.log.call_args[0][0] == 'next-\n'
+
+    def test_multiple_complete_lines_forwarded_together(self):
+        from rdeploy.tasks import _LogStream
+        display = MagicMock()
+        stream = _LogStream(display)
+        stream.write('one\ntwo\n')
+        display.log.assert_called_once_with('one\ntwo\n')
+
+    def test_drain_without_remainder_is_noop(self):
+        from rdeploy.tasks import _LogStream
+        display = MagicMock()
+        stream = _LogStream(display)
+        stream.write('done\n')
+        display.log.reset_mock()
+        stream.drain()
+        assert not display.log.called
 
 
 class TestGitRelease:
