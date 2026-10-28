@@ -2,16 +2,20 @@ import base64
 import json
 import os
 import tempfile
+from unittest.mock import patch
 
 import pytest
 import yaml
 
+from rdeploy.exceptions import ExecuteError
 from rdeploy.utils import (
     strtobool,
     get_path,
     format_yaml,
     get_settings,
     get_helm_bin,
+    get_helm_arch,
+    get_helm_os_string,
     decode_data_value,
     decode_data_fields,
     json_decode_data_fields,
@@ -92,6 +96,52 @@ class TestGetHelmBin:
         result = get_helm_bin(config)
         assert "3.12.0" in result
         assert "helm" in result
+
+    @pytest.mark.parametrize("sys_platform,machine,expected", [
+        ("darwin", "arm64", "opt/helm-v3.12.0/darwin-arm64/helm"),
+        ("darwin", "x86_64", "opt/helm-v3.12.0/darwin-amd64/helm"),
+        ("linux", "aarch64", "opt/helm-v3.12.0/linux-arm64/helm"),
+        ("linux", "x86_64", "opt/helm-v3.12.0/linux-amd64/helm"),
+        ("win32", "AMD64", "opt/helm-v3.12.0/windows-amd64/helm.exe"),
+    ])
+    def test_local_helm_path_per_platform(self, sys_platform, machine, expected):
+        config = {"use_system_helm": False, "helm_version": "3.12.0"}
+        with patch("rdeploy.utils.platform", sys_platform), \
+                patch("rdeploy.utils.py_platform.machine", return_value=machine):
+            assert get_helm_bin(config) == expected
+
+
+class TestGetHelmOsString:
+    @pytest.mark.parametrize("machine,expected", [
+        ("arm64", "arm64"),
+        ("aarch64", "arm64"),
+        ("x86_64", "amd64"),
+        ("AMD64", "amd64"),
+    ])
+    def test_arch(self, machine, expected):
+        with patch("rdeploy.utils.py_platform.machine", return_value=machine):
+            assert get_helm_arch() == expected
+
+    def test_unsupported_arch_raises(self):
+        with patch("rdeploy.utils.py_platform.machine", return_value="mips"):
+            with pytest.raises(ExecuteError):
+                get_helm_arch()
+
+    @pytest.mark.parametrize("sys_platform,expected", [
+        ("linux", "linux-arm64"),
+        ("linux2", "linux-arm64"),
+        ("darwin", "darwin-arm64"),
+        ("win32", "windows-arm64"),
+    ])
+    def test_os_string(self, sys_platform, expected):
+        with patch("rdeploy.utils.platform", sys_platform), \
+                patch("rdeploy.utils.py_platform.machine", return_value="arm64"):
+            assert get_helm_os_string() == expected
+
+    def test_unsupported_platform_raises(self):
+        with patch("rdeploy.utils.platform", "sunos5"):
+            with pytest.raises(ExecuteError):
+                get_helm_os_string()
 
 
 class TestDecodeDataValue:

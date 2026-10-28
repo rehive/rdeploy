@@ -16,7 +16,7 @@ import re
 from packaging import version
 from rdeploy.exceptions import ReleaseError
 
-from rdeploy.utils import get_settings, confirm, get_helm_bin, yaml_decode_data_fields, build_management_cmd
+from rdeploy.utils import get_settings, confirm, get_helm_bin, get_helm_os_string, yaml_decode_data_fields, build_management_cmd
 
 # Cluster Activation:
 #####################
@@ -677,15 +677,11 @@ def helm_setup(ctx, config):
               'use_system_helm: false')
         return
 
-    if sys.platform == 'linux' or sys.platform == 'linux2':
-        os_string = 'linux-amd64'
-        archive_tool = tarfile
-    elif sys.platform == 'darwin':
-        os_string = 'darwin-amd64'
-        archive_tool = tarfile
-    elif sys.platform == 'win32':
-        os_string = 'windows-amd64'
+    os_string = get_helm_os_string()
+    if sys.platform == 'win32':
         archive_tool = zipfile
+    else:
+        archive_tool = tarfile
 
     url = 'https://get.helm.sh/helm-v{version}-{os_string}.tar.gz'.format(version=helm_version,
                                                                           os_string=os_string)
