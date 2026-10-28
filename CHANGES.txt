@@ -1,4 +1,22 @@
 ----
+Version 0.4.1, Wed 28 Oct 2026
+===============================
+- `rdeploy helm-setup` and the local helm path now use the machine's CPU
+  architecture, so Apple Silicon Macs get the native `darwin-arm64` build
+  instead of the x86_64 one (which fails without Rosetta, e.g. on macOS 27).
+  Linux arm64 gets `linux-arm64`. Unsupported architectures raise an error
+  instead of falling back to amd64.
+- `rdeploy helm-setup` now runs `helm version` on the binary it installed and
+  fails with the error if it can't run, instead of printing
+  "Successfully installed".
+
+UPGRADE NOTES:
+- On Apple Silicon, run `rdeploy helm-setup <config>` once to download the
+  arm64 binary to `opt/helm-v<version>/darwin-arm64/`. The old
+  `opt/helm-v<version>/darwin-amd64/` directory is no longer used and can be
+  deleted.
+
+----
 Version 0.4.0, Fri 10 Jul 2026
 ===============================
 - `rdeploy upgrade` now shows live rollout progress while the atomic helm

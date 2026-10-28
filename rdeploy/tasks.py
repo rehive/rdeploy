@@ -14,7 +14,7 @@ import json
 import re
 
 from packaging import version
-from rdeploy.exceptions import ReleaseError
+from rdeploy.exceptions import ReleaseError, ExecuteError
 
 from rdeploy.utils import get_settings, confirm, get_helm_bin, get_helm_os_string, yaml_decode_data_fields, build_management_cmd
 
@@ -690,6 +690,13 @@ def helm_setup(ctx, config):
     tar.extractall('./opt/helm-v{version}'.format(version=helm_version))
 
     helm_bin = get_helm_bin(config_dict)
+
+    # Make sure the extracted binary actually runs on this machine (e.g. an
+    # x86_64 build on Apple Silicon without Rosetta) before reporting success.
+    result = ctx.run('{helm_bin} version'.format(helm_bin=helm_bin), warn=True, hide='both')
+    if result.failed:
+        raise ExecuteError('Installed helm binary at {helm_bin} failed to run:\n{error}'.format(
+            helm_bin=helm_bin, error=(result.stderr or result.stdout).strip()))
 
     provider = config_dict.get('cloud_provider')
     helm_registry = provider.get('helm_registry')
