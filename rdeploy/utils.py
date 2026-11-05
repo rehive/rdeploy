@@ -2,6 +2,7 @@ import os
 import yaml
 import json
 import base64
+import platform as py_platform
 
 
 try:
@@ -65,20 +66,45 @@ def confirm(prompt='Continue?\n', failure_prompt='User cancelled task'):
         raise ParseError(failure_prompt)
 
 
+def get_helm_arch() -> str:
+    """
+    Return the Helm release architecture for this machine ('amd64' or
+    'arm64').
+    """
+    machine = py_platform.machine().lower()
+    if machine in ('arm64', 'aarch64'):
+        return 'arm64'
+    elif machine in ('x86_64', 'amd64'):
+        return 'amd64'
+    raise ExecuteError(f'Unsupported machine architecture for helm: {machine!r}')
+
+
+def get_helm_os_string() -> str:
+    """
+    Return the Helm release '<os>-<arch>' string for this machine, e.g.
+    'darwin-arm64'. It is used in the download URL and is also the name of
+    the folder the release archive extracts to.
+    """
+    if platform == 'linux' or platform == 'linux2':
+        os_name = 'linux'
+    elif platform == 'darwin':
+        os_name = 'darwin'
+    elif platform == 'win32':
+        os_name = 'windows'
+    else:
+        raise ExecuteError(f'Unsupported platform for helm: {platform!r}')
+
+    return f'{os_name}-{get_helm_arch()}'
+
+
 def get_helm_bin(config_dict: dict) -> str:
     if config_dict.get('use_system_helm', True):
         helm_bin = 'helm'
     else:
         helm_version = config_dict['helm_version']
-        if platform == 'linux' or platform == 'linux2':
-            folder = 'linux-amd64'
-            helm_bin = f'opt/helm-v{helm_version}/{folder}/helm'
-        elif platform == 'darwin':
-            folder = 'darwin-amd64'
-            helm_bin = f'opt/helm-v{helm_version}/{folder}/helm'
-        elif platform == 'win32':
-            folder = 'windows-amd64'
-            helm_bin = f'opt/helm-v{helm_version}/{folder}/helm.exe'
+        folder = get_helm_os_string()
+        binary = 'helm.exe' if platform == 'win32' else 'helm'
+        helm_bin = f'opt/helm-v{helm_version}/{folder}/{binary}'
 
     return helm_bin
 

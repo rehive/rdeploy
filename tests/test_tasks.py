@@ -16,8 +16,9 @@ from rdeploy.tasks import (
     create_namespace,
     git_release,
     upgrade,
+    helm_setup,
 )
-from rdeploy.exceptions import ReleaseError
+from rdeploy.exceptions import ReleaseError, ExecuteError
 
 
 @pytest.fixture
@@ -276,6 +277,62 @@ class TestCreateNamespace:
         mock_ctx.run.assert_called_once()
         call_args = mock_ctx.run.call_args[0][0]
         assert 'kubectl create namespace staging-ns' in call_args
+
+
+class TestHelmSetup:
+    # The download and extraction are mocked so nothing is fetched or
+    # written to disk.
+    @staticmethod
+    def settings():
+        return {
+            "configs": {
+                "staging": {
+                    "helm_version": "3.12.0",
+                    "use_system_helm": False,
+                    "cloud_provider": {"name": "gcp", "helm_registry": None},
+                }
+            }
+        }
+
+    @pytest.mark.parametrize("sys_platform,machine,os_string", [
+        ("darwin", "arm64", "darwin-arm64"),
+        ("darwin", "x86_64", "darwin-amd64"),
+        ("linux", "aarch64", "linux-arm64"),
+        ("linux", "x86_64", "linux-amd64"),
+    ])
+    def test_download_url_matches_helm_bin(self, mock_ctx, sys_platform, machine, os_string):
+        mock_ctx.run.return_value = MagicMock(failed=False)
+        with patch('rdeploy.tasks.get_settings', return_value=self.settings()), \
+                patch('rdeploy.utils.platform', sys_platform), \
+                patch('rdeploy.tasks.sys.platform', sys_platform), \
+                patch('rdeploy.utils.py_platform.machine', return_value=machine), \
+                patch('rdeploy.tasks.urllib.request.urlretrieve', return_value=('/tmp/helm.tgz', None)) as mock_retrieve, \
+                patch('rdeploy.tasks.tarfile.open') as mock_tar_open:
+            helm_setup(mock_ctx, 'staging')
+
+        mock_retrieve.assert_called_once_with(
+            'https://get.helm.sh/helm-v3.12.0-{}.tar.gz'.format(os_string), filename=None)
+        mock_tar_open.return_value.extractall.assert_called_once_with('./opt/helm-v3.12.0')
+        version_call = mock_ctx.run.call_args_list[0][0][0]
+        assert version_call == 'opt/helm-v3.12.0/{}/helm version'.format(os_string)
+        repo_call = mock_ctx.run.call_args_list[1][0][0]
+        assert repo_call.startswith('opt/helm-v3.12.0/{}/helm '.format(os_string))
+
+    def test_fails_when_binary_cannot_run(self, mock_ctx, capsys):
+        mock_ctx.run.return_value = MagicMock(
+            failed=True, stdout='', stderr='bash: opt/helm-v3.12.0/darwin-amd64/helm: Bad CPU type in executable\n')
+        with patch('rdeploy.tasks.get_settings', return_value=self.settings()), \
+                patch('rdeploy.utils.platform', 'darwin'), \
+                patch('rdeploy.tasks.sys.platform', 'darwin'), \
+                patch('rdeploy.utils.py_platform.machine', return_value='x86_64'), \
+                patch('rdeploy.tasks.urllib.request.urlretrieve', return_value=('/tmp/helm.tgz', None)), \
+                patch('rdeploy.tasks.tarfile.open'):
+            with pytest.raises(ExecuteError, match='Bad CPU type'):
+                helm_setup(mock_ctx, 'staging')
+
+        # Stops before adding repos and never reports success.
+        mock_ctx.run.assert_called_once()
+        assert 'Successfully installed' not in capsys.readouterr().out
 
 
 class TestUpgrade:
