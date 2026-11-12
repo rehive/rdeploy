@@ -724,6 +724,20 @@ def live_image(ctx, config):
     print(image)
 
 
+def _run_interactive(cmd):
+    """
+    Run a command attached directly to the user's terminal.
+
+    kubectl manages the terminal itself, so invoke's pty layer is skipped: on
+    Python 3.14 its stdin forwarding dies (an undersized FIONREAD buffer now
+    raises SystemError), leaving the session unable to receive input.
+    """
+    print(cmd)
+    result = subprocess.run(cmd, shell=True)
+    if result.returncode:
+        sys.exit(result.returncode)
+
+
 @task
 def shell(ctx, config, tag=None):
     """Exec into the management container"""
@@ -731,7 +745,7 @@ def shell(ctx, config, tag=None):
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     management_cmd = build_management_cmd(config_dict, "/bin/bash", tag)
-    ctx.run(management_cmd, pty=True, warn=False, echo=True)
+    _run_interactive(management_cmd)
 
 
 @task
@@ -741,7 +755,7 @@ def manage(ctx, config, cmd, tag=None):
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
     management_cmd = build_management_cmd(config_dict, f'python manage.py {cmd}', tag)
-    ctx.run(management_cmd, pty=True, warn=False, echo=True)
+    _run_interactive(management_cmd)
 
 
 @task

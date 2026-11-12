@@ -17,6 +17,8 @@ from rdeploy.tasks import (
     git_release,
     upgrade,
     helm_setup,
+    shell,
+    manage,
 )
 from rdeploy.exceptions import ReleaseError, ExecuteError
 
@@ -724,3 +726,39 @@ class TestGitRelease:
         with patch('rdeploy.tasks.confirm'):
             with pytest.raises(SystemExit):
                 git_release(mock_ctx, version_bump='pre')
+
+
+
+class TestInteractiveCommands:
+    # shell and manage hand the terminal straight to kubectl instead of going
+    # through invoke's pty layer, which cannot forward stdin on Python 3.14.
+
+    def _run(self, task, sample_settings_v3, *args, returncode=0):
+        settings = yaml.safe_load(open(sample_settings_v3))
+        with patch('rdeploy.tasks.get_settings', return_value=settings), \
+                patch('rdeploy.tasks.set_context'), \
+                patch('rdeploy.tasks.build_management_cmd',
+                      return_value='kubectl run management') as build, \
+                patch('rdeploy.tasks.subprocess.run',
+                      return_value=MagicMock(returncode=returncode)) as run:
+            task(*args)
+        return build, run
+
+    def test_shell_runs_kubectl_on_the_terminal(self, mock_ctx, sample_settings_v3):
+        build, run = self._run(shell, sample_settings_v3, mock_ctx, 'staging')
+        assert build.call_args[0][1] == '/bin/bash'
+        run.assert_called_once_with('kubectl run management', shell=True)
+        mock_ctx.run.assert_not_called()
+
+    def test_manage_runs_the_management_command(self, mock_ctx, sample_settings_v3):
+        build, run = self._run(
+            manage, sample_settings_v3, mock_ctx, 'staging', 'migrate')
+        assert build.call_args[0][1] == 'python manage.py migrate'
+        run.assert_called_once_with('kubectl run management', shell=True)
+        mock_ctx.run.assert_not_called()
+
+    def test_exit_code_is_propagated(self, mock_ctx, sample_settings_v3):
+        with pytest.raises(SystemExit) as exc:
+            self._run(
+                shell, sample_settings_v3, mock_ctx, 'staging', returncode=3)
+        assert exc.value.code == 3
