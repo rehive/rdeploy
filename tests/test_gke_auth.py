@@ -8,6 +8,7 @@ import urllib.request
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from rdeploy import gke_auth
 from rdeploy.gke_auth import KubectlLoginError
@@ -37,9 +38,42 @@ def completed(stdout='', returncode=0, stderr=''):
 ##########
 
 class TestResolveSettings:
-    def test_missing_project_and_secret(self):
+    @pytest.fixture(autouse=True)
+    def in_tmp_dir(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
+    def test_missing_project(self):
         with pytest.raises(KubectlLoginError, match='--gcp-project'):
             gke_auth.resolve_settings()
+
+    def test_defaults_from_rdeploy_yaml(self, tmp_path):
+        (tmp_path / 'rdeploy.yaml').write_text(yaml.safe_dump({'version': '3', 'configs': {
+            'staging': {'cloud_provider': {'name': 'gcp', 'project': 'yaml-p'}},
+            'production': {'cloud_provider': {'name': 'gcp', 'project': 'yaml-p'}},
+        }}))
+        resolved = gke_auth.resolve_settings()
+        assert resolved['project'] == 'yaml-p'
+        assert resolved['secret'] == 'kubectl-oauth-client'
+
+    def test_v1_rdeploy_yaml(self, tmp_path):
+        (tmp_path / 'rdeploy.yaml').write_text(yaml.safe_dump(
+            {'configs': {'staging': {'cloud_project': 'old-p'}}}))
+        assert gke_auth.resolve_settings()['project'] == 'old-p'
+
+    def test_rdeploy_yaml_with_several_projects(self, tmp_path):
+        (tmp_path / 'rdeploy.yaml').write_text(yaml.safe_dump({'version': '3', 'configs': {
+            'a': {'cloud_provider': {'project': 'p1'}},
+            'b': {'cloud_provider': {'project': 'p2'}},
+        }}))
+        with pytest.raises(KubectlLoginError, match='several GCP projects'):
+            gke_auth.resolve_settings()
+        assert gke_auth.resolve_settings(project='p2')['project'] == 'p2'
+
+    def test_saved_wins_over_rdeploy_yaml(self, tmp_path):
+        (tmp_path / 'rdeploy.yaml').write_text(yaml.safe_dump(
+            {'configs': {'staging': {'cloud_provider': {'project': 'yaml-p'}}}}))
+        gke_auth.save_settings({'project': 'saved-p'})
+        assert gke_auth.resolve_settings()['project'] == 'saved-p'
 
     def test_flags_win_over_env_and_saved(self, monkeypatch):
         gke_auth.save_settings({'project': 'saved-p', 'secret': 'saved-s'})
@@ -320,6 +354,10 @@ class TestConfigureKubeconfig:
 #########
 
 class TestLogin:
+    @pytest.fixture(autouse=True)
+    def in_tmp_dir(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
     @patch('rdeploy.gke_auth.configure_kubeconfig', return_value=['ctx'])
     @patch('rdeploy.gke_auth.sign_in', return_value={'refresh_token': 'r'})
     @patch('rdeploy.gke_auth.load_client', return_value=CLIENT)

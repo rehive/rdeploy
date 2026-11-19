@@ -9,8 +9,8 @@ points the GKE contexts in your kubeconfig at the resulting credentials.
 
 Nothing organisation-specific lives here: the GCP project, the Secret Manager
 secret holding the OAuth client and the clusters all come from flags,
-environment variables or the user's saved settings, and clusters are
-discovered with `gcloud container clusters list`.
+environment variables, the user's saved settings or the project's
+rdeploy.yaml, and clusters are discovered with `gcloud container clusters list`.
 """
 import base64
 import hashlib
@@ -26,6 +26,7 @@ import urllib.parse
 import webbrowser
 
 import requests
+import yaml
 
 CONTAINER_SCOPE = 'https://www.googleapis.com/auth/container.read-only'
 # Exactly these scopes. `gcloud auth application-default login` always adds
@@ -39,6 +40,7 @@ PLUGIN_CACHE = os.path.join(os.path.expanduser('~'), '.kube', 'gke_gcloud_auth_p
 
 ENV_PROJECT = 'RDEPLOY_KUBECTL_PROJECT'
 ENV_SECRET = 'RDEPLOY_KUBECTL_SECRET'
+DEFAULT_SECRET = 'kubectl-oauth-client'
 
 SIGN_IN_TIMEOUT = 300  # seconds to wait for the browser sign-in
 
@@ -82,26 +84,49 @@ def save_settings(settings):
         f.write('\n')
 
 
+def rdeploy_yaml_project(path='rdeploy.yaml'):
+    """
+    The GCP project named in the current directory's rdeploy.yaml, or None if
+    there is no file or it names none. Raise if its configs name several.
+    """
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        settings = yaml.safe_load(f) or {}
+    projects = set()
+    for config in (settings.get('configs') or {}).values():
+        config = config or {}
+        provider = config.get('cloud_provider') or {}
+        project = provider.get('project') or config.get('cloud_project')
+        if project:
+            projects.add(project)
+    if len(projects) > 1:
+        raise KubectlLoginError(
+            '{} names several GCP projects ({}). Pass --gcp-project to pick one.'
+            .format(path, ', '.join(sorted(projects))))
+    return projects.pop() if projects else None
+
+
 def resolve_settings(project=None, secret=None, account=None, clusters=None):
     """
     Merge flags, environment variables and saved settings, in that order of
-    precedence. Raise if the GCP project or secret is still unknown.
+    precedence. Without any of those, take the project from rdeploy.yaml in
+    the current directory and use the default secret name.
     """
     saved = load_saved_settings()
     resolved = {
-        'project': project or os.environ.get(ENV_PROJECT) or saved.get('project'),
-        'secret': secret or os.environ.get(ENV_SECRET) or saved.get('secret'),
+        'project': (project or os.environ.get(ENV_PROJECT) or saved.get('project')
+                    or rdeploy_yaml_project()),
+        'secret': secret or os.environ.get(ENV_SECRET) or saved.get('secret') or DEFAULT_SECRET,
         'account': account or saved.get('account'),
         'clusters': list(clusters) if clusters else saved.get('clusters') or [],
     }
-    missing = [name for name in ('project', 'secret') if not resolved[name]]
-    if missing:
+    if not resolved['project']:
         raise KubectlLoginError(
-            'rdeploy doesn\'t know which {} to use yet. On the first run, pass'
-            ' --gcp-project (the project with your GKE clusters and the secret)'
-            ' and --secret (the Secret Manager secret holding the OAuth client),'
-            ' or set {} and {}. They are saved to {} for next time.'
-            .format(' and '.join(missing), ENV_PROJECT, ENV_SECRET, settings_path()))
+            'rdeploy doesn\'t know which GCP project to use yet. Run this from a'
+            ' directory with an rdeploy.yaml, or pass --gcp-project (the project'
+            ' with your GKE clusters and the OAuth client secret), or set {}.'
+            ' It is saved to {} for next time.'.format(ENV_PROJECT, settings_path()))
     return resolved
 
 

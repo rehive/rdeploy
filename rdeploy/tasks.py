@@ -140,10 +140,12 @@ def set_context(ctx, config):
 
 
 @task(iterable=['cluster'], help={
-    'gcp-project': 'GCP project with the GKE clusters and the OAuth client secret.'
-                   ' Saved for next time. Env: RDEPLOY_KUBECTL_PROJECT',
-    'secret': 'Secret Manager secret holding the OAuth client JSON.'
-              ' Saved for next time. Env: RDEPLOY_KUBECTL_SECRET',
+    'gcp-project': 'GCP project with the GKE clusters and the OAuth client secret'
+                   ' (default: the project in ./rdeploy.yaml). Saved for next time.'
+                   ' Env: RDEPLOY_KUBECTL_PROJECT',
+    'secret': 'Secret Manager secret holding the OAuth client JSON'
+              ' (default: kubectl-oauth-client). Saved for next time.'
+              ' Env: RDEPLOY_KUBECTL_SECRET',
     'account': 'Your work Google account: used for gcloud and preselected in'
                ' the browser (default: the active gcloud account). Saved for next time.',
     'cluster': 'Only configure this cluster (repeatable; default: every cluster'

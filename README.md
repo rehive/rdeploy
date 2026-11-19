@@ -82,17 +82,27 @@ It:
 
 You need gcloud signed in with your work account and set up for your device
 certificate, kubectl, and the GKE auth plugin
-(`gcloud components install gke-gcloud-auth-plugin`). Your organisation tells
-you the project and secret name to use:
+(`gcloud components install gke-gcloud-auth-plugin`). Then run this from any
+project that has an `rdeploy.yaml`:
 
 ```bash
-rdeploy kubectl-login --gcp-project my-project --secret kubectl-oauth-client
+rdeploy kubectl-login
 ```
 
-rdeploy saves those settings to `~/.config/rdeploy/kubectl-login.json`. You can
-set `RDEPLOY_KUBECTL_PROJECT` and `RDEPLOY_KUBECTL_SECRET` instead. Pass
-`--account you@example.com` if gcloud's active account isn't the one to sign
-in with, and `--cluster NAME` (repeatable) to configure only some clusters.
+rdeploy takes the GCP project from that `rdeploy.yaml` and reads the OAuth
+client from the Secret Manager secret `kubectl-oauth-client` in it. If your
+`rdeploy.yaml` names several projects, you're elsewhere, or your organisation
+uses another secret name, say so:
+
+```bash
+rdeploy kubectl-login --gcp-project my-project --secret my-secret
+```
+
+rdeploy saves the project and secret to `~/.config/rdeploy/kubectl-login.json`,
+so later runs work from any directory. You can set `RDEPLOY_KUBECTL_PROJECT`
+and `RDEPLOY_KUBECTL_SECRET` instead. Pass `--account you@example.com` if
+gcloud's active account isn't the one to sign in with, and `--cluster NAME`
+(repeatable) to configure only some clusters.
 
 ### When the session expires
 
@@ -125,7 +135,9 @@ rdeploy kubectl-login --status
 
 The command expects a Desktop app OAuth client, exempted from CBA in your
 access levels, limited to the scopes above, and stored as JSON (the file the
-Cloud console downloads) in a Secret Manager secret your developers can read.
+Cloud console downloads) in a Secret Manager secret your developers can read,
+named `kubectl-oauth-client` in the project your `rdeploy.yaml` files name
+unless you tell developers otherwise.
 It doesn't contain any organisation's client ID, project or cluster names.
 
 ## Configuration
