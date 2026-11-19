@@ -7,6 +7,7 @@ import shutil
 import threading
 import time
 import subprocess
+import shlex
 
 from invoke import task
 import semver
@@ -16,7 +17,9 @@ import re
 from packaging import version
 from rdeploy.exceptions import ReleaseError, ExecuteError
 
-from rdeploy.utils import get_settings, confirm, get_helm_bin, get_helm_os_string, yaml_decode_data_fields, build_management_cmd
+from rdeploy.utils import (get_settings, confirm, get_helm_bin, get_helm_os_string,
+                           yaml_decode_data_fields, build_management_cmd,
+                           get_kube_target, kubectl_target_flags, helm_target_flags)
 
 # Cluster Activation:
 #####################
@@ -116,63 +119,22 @@ def activate(ctx, config):
 
 @task
 def set_context(ctx, config):
-    """Switch cluster and namespace"""
+    """
+    Switch cluster and namespace
+
+    This points your local kubectl at the config's cluster and namespace, for
+    your own commands. rdeploy's tasks don't depend on it: they pass the
+    context and namespace on every kubectl and helm call.
+    """
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    provider_data = config_dict.get('cloud_provider')
+    context, namespace = get_kube_target(settings_dict, config_dict)
 
-    # Check for future versions
-    if settings_dict.get('version') and version.parse(str(settings_dict['version'])) > version.parse('3'):
-        sys.exit(f"Unsupported rdeploy.yaml version, please upgrade rdeploy or double check the version number.")
-
-    # v3 of the config file uses the kube_context value to set the kubernetes cluster context
-    elif str(settings_dict.get('version')) == '3' and config_dict.get('kube_context'):
-        ctx.run('kubectl config use-context {kube_context}'
-                    .format(kube_context = config_dict['kube_context']),
-                    echo=True)
-        ctx.run('kubectl config set-context --current --namespace={namespace}'
-                    .format(namespace=config_dict['namespace']),
-                    echo=True)
-
-    # v2 (or v3 when kube_context is not specified)
-    elif version.parse(str(settings_dict['version'])) >= version.parse('2'):
-        if not provider_data or provider_data.get('name') != 'gcp':
-            sys.exit("Unsupported cloud provider: {}."
-                     " Only 'gcp' is supported since rdeploy 0.2.0"
-                     " (Azure support was removed)."
-                     .format(provider_data.get('name') if provider_data else None))
-
-        if provider_data.get('zone') is not None:
-            get_zone = provider_data['zone']
-        elif provider_data.get('region') is not None:
-            get_zone = provider_data['region']
-        else:
-            sys.exit("cloud_provider requires either 'zone' or 'region' in rdeploy.yaml.")
-
-        ctx.run('kubectl config use-context {name}_{project}_{cluster}_{zone}'
-            ' --namespace={namespace}'
-            .format(namespace=config_dict['namespace'],
-                    project=provider_data['project'],
-                    cluster=provider_data['kube_cluster'],
-                    name=provider_data['name'],
-                    zone=get_zone),
+    ctx.run('kubectl config use-context {context}'
+            .format(context=shlex.quote(context)),
             echo=True)
-        ctx.run('kubectl config set-context --current'
-            ' --namespace={namespace}'
-            .format(namespace=config_dict['namespace']),
-            echo=True)
-
-    # Config file v1 or no version
-    else:
-        ctx.run('kubectl config use-context gcp_{cloud_project}_{cluster}_europe-west1-c'
-            ' --namespace={namespace}'
-            .format(namespace=config_dict['namespace'],
-                    cloud_project=config_dict['cloud_project'],
-                    cluster=config_dict['cluster']),
-            echo=True)
-        ctx.run('kubectl config set-context --current'
-            ' --namespace={namespace}'
-            .format(namespace=config_dict['namespace']),
+    ctx.run('kubectl config set-context --current --namespace={namespace}'
+            .format(namespace=shlex.quote(namespace)),
             echo=True)
 
 # Versioning Helpers
@@ -257,8 +219,10 @@ def create_namespace(ctx, config):
     config_dict = settings_dict['configs'][config]
     set_context(ctx, config)
 
-    ctx.run('kubectl create namespace {namespace}'
-            .format(namespace=config_dict['namespace']),
+    context, namespace = get_kube_target(settings_dict, config_dict)
+    ctx.run('kubectl --context {context} create namespace {namespace}'
+            .format(context=shlex.quote(context),
+                    namespace=shlex.quote(namespace)),
             echo=True)
 
 
@@ -271,14 +235,17 @@ def upload_secrets(ctx, config, env_file):
     config_dict = settings_dict['configs'][config]
     set_context(ctx, config)
 
-    ctx.run('kubectl delete secret {project_name}'\
-            .format(project_name=config_dict['project_name'],
-                    namespace=config_dict['namespace']),
+    target = kubectl_target_flags(settings_dict, config_dict)
+
+    ctx.run('kubectl {target} delete secret {project_name}'
+            .format(target=target,
+                    project_name=config_dict['project_name']),
             warn=True)
 
-    ctx.run('kubectl create secret generic {project_name}'
+    ctx.run('kubectl {target} create secret generic {project_name}'
             ' --from-env-file {env_file}'
-            .format(project_name=config_dict['project_name'],
+            .format(target=target,
+                    project_name=config_dict['project_name'],
                     env_file=env_file))
 
 
@@ -287,9 +254,14 @@ def decode_secret(ctx, config, secret):
     """
     Prints the decoded values of a kubernetes secret
     """
+    settings_dict = get_settings()
+    config_dict = settings_dict['configs'][config]
     set_context(ctx, config)
     o = io.StringIO()
-    ctx.run('kubectl get secret {secret} -o yaml'.format(secret=secret),out_stream=o)
+    ctx.run('kubectl {target} get secret {secret} -o yaml'
+            .format(target=kubectl_target_flags(settings_dict, config_dict),
+                    secret=secret),
+            out_stream=o)
     print(yaml_decode_data_fields(o.getvalue()))
 
 
@@ -363,9 +335,11 @@ def install(ctx, config):
         helm_chart = config_dict['helm_chart']
 
     ctx.run('{helm_bin} install{helm_install_flag} {project_name} '
+            '{target} '
             '--values {helm_values_path} '
             '--version {helm_chart_version} {helm_chart}'
             .format(helm_bin=helm_bin,
+                    target=helm_target_flags(settings_dict, config_dict),
                     project_name=config_dict['project_name'],
                     helm_install_flag=install_flag,
                     helm_values_path=config_dict['helm_values_path'],
@@ -448,7 +422,7 @@ class _LogStream(io.TextIOBase):
             self._buf = ''
 
 
-def _watch_rollout(stop_event, poll_interval=2, display=None):
+def _watch_rollout(stop_event, poll_interval=2, display=None, kube_args=()):
     """Show live `kubectl get pods` progress while the atomic helm upgrade
     waits, so you can see pods being created, pulled, started and terminated
     instead of a silent wait.
@@ -475,10 +449,11 @@ def _watch_rollout(stop_event, poll_interval=2, display=None):
     upgrade itself show up automatically, and there are no long-lived child
     processes to tear down: each poll is one short, bounded `kubectl get`.
 
-    set_context() has already pointed kubectl at the right context and
-    namespace. The whole body is wrapped in a broad except so a broken
-    watcher (kubectl missing, permission error) can never raise into the
-    main flow or change the exit code.
+    kube_args are the `--context`/`--namespace` flags of the release being
+    upgraded, so the table always shows that namespace even if the local
+    kubeconfig is switched elsewhere mid-upgrade. The whole body is wrapped
+    in a broad except so a broken watcher (kubectl missing, permission
+    error) can never raise into the main flow or change the exit code.
     """
     last_rows = {}
     header_printed = False
@@ -494,7 +469,7 @@ def _watch_rollout(stop_event, poll_interval=2, display=None):
 
     try:
         while not stop_event.is_set():
-            status = subprocess.run(['kubectl', 'get', 'pods',
+            status = subprocess.run(['kubectl', *kube_args, 'get', 'pods',
                                      '--request-timeout=10s'],
                                     capture_output=True, text=True)
             if status.returncode == 0:
@@ -597,14 +572,21 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
             display = _RolloutDisplay(sys.stdout)
             run_streams = {'out_stream': _LogStream(display),
                            'err_stream': _LogStream(display)}
-        watcher = threading.Thread(target=_watch_rollout, args=(stop_event,),
-                                   kwargs={'display': display}, daemon=True)
+        context, namespace = get_kube_target(settings_dict, config_dict)
+        watcher = threading.Thread(
+            target=_watch_rollout, args=(stop_event,),
+            kwargs={'display': display,
+                    'kube_args': ('--context', context,
+                                  '--namespace', namespace)},
+            daemon=True)
 
     helm_command = ('{helm_bin} upgrade {project_name} '
+                    '{target} '
                     '--values {helm_values_path} '
                     '--set image.tag={version} '
                     '--version {helm_chart_version}{atomic_flags} {helm_chart}'
                     .format(helm_bin=helm_bin,
+                            target=helm_target_flags(settings_dict, config_dict),
                             project_name=config_dict['project_name'],
                             helm_chart=helm_chart,
                             helm_values_path=config_dict['helm_values_path'],
@@ -656,8 +638,10 @@ def helm(ctx, config, command):
 
     helm_bin = get_helm_bin(config_dict)
 
-    ctx.run('{helm_bin} {command}'.format(helm_bin=helm_bin,
-                                          command=command),
+    ctx.run('{helm_bin} {target} {command}'
+            .format(helm_bin=helm_bin,
+                    target=helm_target_flags(settings_dict, config_dict),
+                    command=command),
             echo=True)
 
 
@@ -716,8 +700,9 @@ def live_image(ctx, config):
     config_dict = settings_dict['configs'][config]
     set_context(ctx, config)
 
-    result = ctx.run('kubectl get deployment {project_name} --output=json'
-                     .format(project_name=config_dict['project_name']),
+    result = ctx.run('kubectl {target} get deployment {project_name} --output=json'
+                     .format(target=kubectl_target_flags(settings_dict, config_dict),
+                             project_name=config_dict['project_name']),
                      echo=True, hide='stdout')
     server_config = json.loads(result.stdout)
     image = server_config['spec']['template']['spec']['containers'][0]['image']
@@ -744,7 +729,9 @@ def shell(ctx, config, tag=None):
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    management_cmd = build_management_cmd(config_dict, "/bin/bash", tag)
+    context, _ = get_kube_target(settings_dict, config_dict)
+    management_cmd = build_management_cmd(config_dict, "/bin/bash", tag,
+                                          kube_context=context)
     _run_interactive(management_cmd)
 
 
@@ -754,7 +741,9 @@ def manage(ctx, config, cmd, tag=None):
     set_context(ctx, config)
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
-    management_cmd = build_management_cmd(config_dict, f'python manage.py {cmd}', tag)
+    context, _ = get_kube_target(settings_dict, config_dict)
+    management_cmd = build_management_cmd(config_dict, f'python manage.py {cmd}', tag,
+                                          kube_context=context)
     _run_interactive(management_cmd)
 
 

@@ -20,6 +20,9 @@ from rdeploy.utils import (
     decode_data_fields,
     json_decode_data_fields,
     yaml_decode_data_fields,
+    get_kube_target,
+    kubectl_target_flags,
+    helm_target_flags,
 )
 
 
@@ -197,3 +200,61 @@ class TestYamlDecodeDataFields:
         result = yaml_decode_data_fields(yaml.dump(secret))
         parsed = yaml.safe_load(result)
         assert parsed["data"]["key"] == "value"
+
+
+class TestGetKubeTarget:
+    """The context and namespace come from rdeploy.yaml alone, never from the
+    local kubeconfig's current context or namespace."""
+
+    def _v2(self, **provider):
+        cloud_provider = {'name': 'gcp', 'project': 'my-project',
+                          'kube_cluster': 'cluster-1'}
+        cloud_provider.update(provider)
+        return {'version': '2'}, {'namespace': 'staging-ns',
+                                  'cloud_provider': cloud_provider}
+
+    def test_v3_uses_kube_context(self):
+        settings = {'version': '3'}
+        config = {'namespace': 'staging-ns',
+                  'kube_context': 'gke_my-project_us-central1_cluster-1'}
+        assert get_kube_target(settings, config) == (
+            'gke_my-project_us-central1_cluster-1', 'staging-ns')
+
+    def test_v2_with_region(self):
+        assert get_kube_target(*self._v2(region='us-central1')) == (
+            'gcp_my-project_cluster-1_us-central1', 'staging-ns')
+
+    def test_v2_prefers_zone_over_region(self):
+        assert get_kube_target(*self._v2(zone='us-central1-a', region='us-central1')) == (
+            'gcp_my-project_cluster-1_us-central1-a', 'staging-ns')
+
+    def test_v3_without_kube_context_falls_back_to_v2(self):
+        settings, config = self._v2(region='us-central1')
+        settings['version'] = '3'
+        assert get_kube_target(settings, config)[0] == 'gcp_my-project_cluster-1_us-central1'
+
+    def test_v2_missing_zone_and_region_exits(self):
+        with pytest.raises(SystemExit, match="'zone' or 'region'"):
+            get_kube_target(*self._v2())
+
+    def test_v2_non_gcp_provider_exits(self):
+        with pytest.raises(SystemExit, match='Unsupported cloud provider: azure'):
+            get_kube_target(*self._v2(name='azure', region='us-central1'))
+
+    def test_v1_legacy(self):
+        config = {'namespace': 'staging-ns', 'cloud_project': 'my-gcp-project',
+                  'cluster': 'cluster-1'}
+        assert get_kube_target({'version': '1'}, config) == (
+            'gcp_my-gcp-project_cluster-1_europe-west1-c', 'staging-ns')
+
+    def test_future_version_exits(self):
+        with pytest.raises(SystemExit, match='Unsupported rdeploy.yaml version'):
+            get_kube_target({'version': '4'}, {'namespace': 'ns'})
+
+    def test_flags(self):
+        settings = {'version': '3'}
+        config = {'namespace': 'staging-ns', 'kube_context': 'ctx-1'}
+        assert kubectl_target_flags(settings, config) == \
+            '--context ctx-1 --namespace staging-ns'
+        assert helm_target_flags(settings, config) == \
+            '--kube-context ctx-1 --namespace staging-ns'

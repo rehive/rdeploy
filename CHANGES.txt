@@ -1,3 +1,20 @@
+Version 0.4.3, Thu 19 Nov 2026
+===============================
+- Every kubectl and helm command rdeploy runs now names the config's kube
+  context and namespace explicitly (`--context`/`--namespace` for kubectl,
+  `--kube-context`/`--namespace` for helm) instead of relying on the
+  kubeconfig's current context and namespace. That state is shared by every
+  terminal on the machine, so switching namespace elsewhere (e.g. `kubens`)
+  while a command ran could send it to the wrong namespace. An atomic
+  `helm upgrade` resolves the namespace again when it rolls back, so a
+  rollback could recreate the release's objects in another namespace.
+- Covers `upgrade` (and its rollout progress display), `install`, `helm`,
+  `live-image`, `upload-secrets`, `decode-secret`, `create-namespace`, and
+  the management pod started by `shell` and `manage`.
+- `set-context` still switches your local kubectl to the config's cluster
+  and namespace, but rdeploy's own commands no longer depend on it.
+
+----
 ----
 Version 0.4.1, Wed 28 Oct 2026
 ===============================

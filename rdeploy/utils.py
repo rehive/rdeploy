@@ -1,8 +1,12 @@
 import os
+import sys
 import yaml
 import json
+import shlex
 import base64
 import platform as py_platform
+
+from packaging import version
 
 
 try:
@@ -108,6 +112,73 @@ def get_helm_bin(config_dict: dict) -> str:
 
     return helm_bin
 
+def get_kube_target(settings_dict: dict, config_dict: dict) -> tuple:
+    """
+    Return the (kube context, namespace) a config deploys to, from
+    rdeploy.yaml alone.
+
+    Every kubectl and helm call passes these explicitly instead of relying on
+    the kubeconfig's current context and namespace. Those are shared, mutable
+    state: anything else on the machine (another terminal running `kubens` or
+    `kubectl config set-context`) can change them while a command runs, and
+    a long command such as an atomic `helm upgrade` resolves the namespace
+    again when it rolls back.
+    """
+    config_version = settings_dict.get('version')
+    namespace = config_dict['namespace']
+
+    if config_version and version.parse(str(config_version)) > version.parse('3'):
+        sys.exit("Unsupported rdeploy.yaml version, please upgrade rdeploy"
+                 " or double check the version number.")
+
+    # v3 of the config file names the kubernetes context directly.
+    if str(config_version) == '3' and config_dict.get('kube_context'):
+        return config_dict['kube_context'], namespace
+
+    # v2 (or v3 when kube_context is not specified)
+    if config_version and version.parse(str(config_version)) >= version.parse('2'):
+        provider_data = config_dict.get('cloud_provider')
+        if not provider_data or provider_data.get('name') != 'gcp':
+            sys.exit("Unsupported cloud provider: {}."
+                     " Only 'gcp' is supported since rdeploy 0.2.0"
+                     " (Azure support was removed)."
+                     .format(provider_data.get('name') if provider_data else None))
+
+        if provider_data.get('zone') is not None:
+            zone = provider_data['zone']
+        else:
+            zone = provider_data.get('region')
+        if zone is None:
+            sys.exit("cloud_provider requires either 'zone' or 'region' in rdeploy.yaml.")
+
+        return ('{name}_{project}_{cluster}_{zone}'.format(
+                    name=provider_data['name'],
+                    project=provider_data['project'],
+                    cluster=provider_data['kube_cluster'],
+                    zone=zone),
+                namespace)
+
+    # Config file v1 or no version
+    return ('gcp_{cloud_project}_{cluster}_europe-west1-c'.format(
+                cloud_project=config_dict['cloud_project'],
+                cluster=config_dict['cluster']),
+            namespace)
+
+
+def kubectl_target_flags(settings_dict: dict, config_dict: dict) -> str:
+    """`--context ... --namespace ...` for a kubectl command line."""
+    context, namespace = get_kube_target(settings_dict, config_dict)
+    return '--context {context} --namespace {namespace}'.format(
+        context=shlex.quote(context), namespace=shlex.quote(namespace))
+
+
+def helm_target_flags(settings_dict: dict, config_dict: dict) -> str:
+    """`--kube-context ... --namespace ...` for a helm command line."""
+    context, namespace = get_kube_target(settings_dict, config_dict)
+    return '--kube-context {context} --namespace {namespace}'.format(
+        context=shlex.quote(context), namespace=shlex.quote(namespace))
+
+
 def json_decode_data_fields(secret_json):
     return json.dumps(decode_data_fields(json.loads(secret_json)), indent=2)
 
@@ -132,19 +203,21 @@ def decode_data_value(encoded_value):
         return decoded_value
 
 
-def build_management_cmd(config_dict: dict, cmd: str = "", tag: str = "") -> str:
+def build_management_cmd(config_dict: dict, cmd: str = "", tag: str = "",
+                         kube_context: str = None) -> str:
     from kubernetes import client, config
     from kubernetes.client.models import V1Container
     from kubernetes.client.rest import ApiException
     from kubernetes.config.kube_config import KubeConfigMerger, KubeConfigLoader, KUBE_CONFIG_DEFAULT_LOCATION
     from kubernetes.config.config_exception import ConfigException
 
-    config.load_kube_config()
+    config.load_kube_config(context=kube_context)
 
     # Workaround to read the proxy-url as it is not currently read by load_kube_config()
     try:
         kcfg = KubeConfigMerger(KUBE_CONFIG_DEFAULT_LOCATION)
-        k = KubeConfigLoader(config_dict=kcfg.config)
+        k = KubeConfigLoader(config_dict=kcfg.config,
+                             active_context=kube_context)
         proxy_url = k._cluster['proxy-url']
     except ConfigException:
         proxy_url = None
@@ -222,7 +295,15 @@ def build_management_cmd(config_dict: dict, cmd: str = "", tag: str = "") -> str
 
     overrides_str = dumps(overrides)
 
-    return f'kubectl run management --rm --tty=true --stdin=true '\
+    # Name the context and namespace explicitly, so the pod is created next to
+    # the deployment it was read from whatever the kubeconfig's current
+    # namespace is.
+    target = ''
+    if kube_context:
+        target = f'--context {shlex.quote(kube_context)} '
+    target += f'--namespace {shlex.quote(config_dict["namespace"])} '
+
+    return f'kubectl {target}run management --rm --tty=true --stdin=true '\
         f'--image={container.image} '\
         f'--overrides=\'{overrides_str}\' '\
         f'--output yaml --command -- \'\''

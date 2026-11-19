@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 
@@ -19,6 +20,10 @@ from rdeploy.tasks import (
     helm_setup,
     shell,
     manage,
+    helm,
+    live_image,
+    upload_secrets,
+    install,
 )
 from rdeploy.exceptions import ReleaseError, ExecuteError
 
@@ -278,7 +283,8 @@ class TestCreateNamespace:
                 create_namespace(mock_ctx, 'staging')
         mock_ctx.run.assert_called_once()
         call_args = mock_ctx.run.call_args[0][0]
-        assert 'kubectl create namespace staging-ns' in call_args
+        assert call_args == ('kubectl --context gke_my-project_us-central1_cluster-1'
+                             ' create namespace staging-ns')
 
 
 class TestHelmSetup:
@@ -426,6 +432,75 @@ class TestUpgrade:
         # block even on the failure path.
         stop_event = mock_watch.call_args[0][0]
         assert stop_event.is_set()
+
+
+class TestExplicitKubeTarget:
+    """Every kubectl and helm call names the config's context and namespace,
+    so a kubeconfig switched elsewhere (another terminal running kubens, say)
+    can't redirect it -- including an atomic upgrade's rollback."""
+
+    HELM_TARGET = '--kube-context gke_my-project_us-central1_cluster-1 --namespace staging-ns'
+    KUBECTL_TARGET = '--context gke_my-project_us-central1_cluster-1 --namespace staging-ns'
+
+    def _settings(self, sample_settings_v3):
+        return yaml.safe_load(open(sample_settings_v3))
+
+    def test_upgrade_passes_target_to_helm_and_watcher(self, mock_ctx, sample_settings_v3):
+        mock_ctx.run.return_value = MagicMock(failed=False)
+        with patch('rdeploy.tasks.get_settings', return_value=self._settings(sample_settings_v3)):
+            with patch('rdeploy.tasks.set_context'):
+                with patch('rdeploy.tasks._watch_rollout') as mock_watch:
+                    upgrade(mock_ctx, 'staging', tag='1.2.3')
+        assert self.HELM_TARGET in mock_ctx.run.call_args[0][0]
+        assert mock_watch.call_args[1]['kube_args'] == (
+            '--context', 'gke_my-project_us-central1_cluster-1',
+            '--namespace', 'staging-ns')
+
+    def test_install_passes_target(self, mock_ctx, sample_settings_v3):
+        with patch('rdeploy.tasks.get_settings', return_value=self._settings(sample_settings_v3)):
+            with patch('rdeploy.tasks.set_context'):
+                install(mock_ctx, 'staging')
+        assert self.HELM_TARGET in mock_ctx.run.call_args[0][0]
+
+    def test_helm_passthrough_passes_target(self, mock_ctx, sample_settings_v3):
+        with patch('rdeploy.tasks.get_settings', return_value=self._settings(sample_settings_v3)):
+            with patch('rdeploy.tasks.set_context'):
+                helm(mock_ctx, 'staging', 'history my-project')
+        assert mock_ctx.run.call_args[0][0] == 'helm {} history my-project'.format(self.HELM_TARGET)
+
+    def test_live_image_passes_target(self, mock_ctx, sample_settings_v3):
+        mock_ctx.run.return_value = MagicMock(stdout=json.dumps(
+            {'spec': {'template': {'spec': {'containers': [{'image': 'img:1'}]}}}}))
+        with patch('rdeploy.tasks.get_settings', return_value=self._settings(sample_settings_v3)):
+            with patch('rdeploy.tasks.set_context'):
+                live_image(mock_ctx, 'staging')
+        assert self.KUBECTL_TARGET in mock_ctx.run.call_args[0][0]
+
+    def test_upload_secrets_passes_target(self, mock_ctx, sample_settings_v3):
+        with patch('rdeploy.tasks.get_settings', return_value=self._settings(sample_settings_v3)):
+            with patch('rdeploy.tasks.set_context'):
+                upload_secrets(mock_ctx, 'staging', '.env')
+        commands = [call[0][0] for call in mock_ctx.run.call_args_list]
+        assert len(commands) == 2
+        assert all(self.KUBECTL_TARGET in command for command in commands)
+
+    def test_shell_builds_command_for_the_config_context(self, mock_ctx, sample_settings_v3):
+        with patch('rdeploy.tasks.get_settings', return_value=self._settings(sample_settings_v3)), \
+                patch('rdeploy.tasks.set_context'), \
+                patch('rdeploy.tasks.build_management_cmd', return_value='kubectl run management') as build, \
+                patch('rdeploy.tasks.subprocess.run', return_value=MagicMock(returncode=0)):
+            shell(mock_ctx, 'staging')
+        assert build.call_args[1]['kube_context'] == 'gke_my-project_us-central1_cluster-1'
+
+    def test_watcher_polls_with_target(self):
+        from rdeploy.tasks import _watch_rollout
+        event = MagicMock()
+        event.is_set.side_effect = [False, True]
+        event.wait.return_value = False
+        result = MagicMock(returncode=0, stdout='NAME READY\n', stderr='')
+        with patch('rdeploy.tasks.subprocess.run', return_value=result) as run:
+            _watch_rollout(event, kube_args=('--context', 'ctx', '--namespace', 'ns'))
+        assert run.call_args[0][0][:5] == ['kubectl', '--context', 'ctx', '--namespace', 'ns']
 
 
 class TestWatchRollout:
