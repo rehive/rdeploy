@@ -1,3 +1,19 @@
+Version 0.5.0, unreleased
+===============================
+- New `rdeploy kubectl-login` signs kubectl in to GKE under Google Cloud
+  certificate-based access (CBA). It reads a CBA-exempt Desktop OAuth client
+  from Secret Manager with your gcloud login, signs in through it (loopback +
+  PKCE) asking only for `openid email container.read-only`, writes an
+  `authorized_user` credentials file (0600), adds any missing clusters to the
+  kubeconfig and points their contexts at a `gke-gcloud-auth-plugin` user
+  that uses those credentials. Clusters are discovered with
+  `gcloud container clusters list`; the project and secret come from flags,
+  `RDEPLOY_KUBECTL_PROJECT`/`RDEPLOY_KUBECTL_SECRET` or the settings saved on
+  the first run, so re-running is just `rdeploy kubectl-login`.
+- `rdeploy kubectl-login --status` checks whether the saved session is still
+  valid and prints the command to sign in again if not.
+
+----
 Version 0.4.3, Thu 19 Nov 2026
 ===============================
 - Every kubectl and helm command rdeploy runs now names the config's kube

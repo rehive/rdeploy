@@ -34,6 +34,7 @@ rdeploy git-release patch
 | `set-project` | Set the active GCP project |
 | `set-cluster` | Set the active Kubernetes cluster |
 | `set-context` | Switch cluster and namespace context |
+| `kubectl-login` | Sign kubectl in to GKE under certificate-based access (see [kubectl under certificate-based access](#kubectl-under-certificate-based-access)) |
 | `activate` | Fetch and set project, cluster, and namespace |
 | `install` | Install a Helm chart deployment |
 | `upgrade` | Upgrade a Helm deployment to a new image tag (atomic by default: waits for the rollout and rolls back on failure; use `--no-atomic` to skip, `--timeout` to adjust the wait, default `15m`) |
@@ -55,6 +56,77 @@ rdeploy git-release patch
 | `create-public-bucket` | Create a public GCS bucket |
 | `create-volume` | Create a GCE persistent disk |
 | `compose` | Wrapper for docker-compose |
+
+## kubectl under certificate-based access
+
+With Google Cloud certificate-based access (CBA), gcloud's tokens only work
+alongside your device certificate, and kubectl can't present it.
+`rdeploy kubectl-login` signs kubectl in through a separate OAuth client that
+your organisation exempts from CBA instead. It asks only for
+`openid email https://www.googleapis.com/auth/container.read-only`: enough to
+identify you to the clusters, where Kubernetes RBAC decides what you can do,
+and nothing else in Google Cloud.
+
+It:
+
+1. reads the OAuth client from Secret Manager with your gcloud login (or from
+   a local file with `--client-json`),
+2. opens your browser to sign in (OAuth loopback with PKCE),
+3. saves the credentials to `~/.config/rdeploy/kubectl-credentials.json`,
+   readable only by you,
+4. finds the project's GKE clusters (`gcloud container clusters list`), adds
+   any that are missing from your kubeconfig, and points their contexts at a
+   kubectl user that uses those credentials.
+
+### One-time setup
+
+You need gcloud signed in with your work account and set up for your device
+certificate, kubectl, and the GKE auth plugin
+(`gcloud components install gke-gcloud-auth-plugin`). Your organisation tells
+you the project and secret name to use:
+
+```bash
+rdeploy kubectl-login --gcp-project my-project --secret kubectl-oauth-client
+```
+
+rdeploy saves those settings to `~/.config/rdeploy/kubectl-login.json`. You can
+set `RDEPLOY_KUBECTL_PROJECT` and `RDEPLOY_KUBECTL_SECRET` instead. Pass
+`--account you@example.com` if gcloud's active account isn't the one to sign
+in with, and `--cluster NAME` (repeatable) to configure only some clusters.
+
+### When the session expires
+
+Sessions last as long as your organisation allows, often 12 hours. When
+kubectl fails with an authentication error such as `invalid_grant` or
+`reauth related error`, sign in again:
+
+```bash
+rdeploy kubectl-login
+```
+
+To check whether the saved session is still valid (exits non-zero if not):
+
+```bash
+rdeploy kubectl-login --status
+```
+
+### Troubleshooting
+
+- **`Unauthorized` right after signing in:** delete
+  `~/.kube/gke_gcloud_auth_plugin_cache` and retry.
+- **`access_not_configured` or "Access blocked" in the browser:** the OAuth
+  client only allows the scopes above, so use `rdeploy kubectl-login` rather
+  than `gcloud auth application-default login`, which always asks for more.
+  If it still fails, your admin hasn't allowed the app for your account.
+- **Back to the gcloud user:** `gcloud container clusters get-credentials`
+  restores the default user on that cluster's context.
+
+### For admins
+
+The command expects a Desktop app OAuth client, exempted from CBA in your
+access levels, limited to the scopes above, and stored as JSON (the file the
+Cloud console downloads) in a Secret Manager secret your developers can read.
+It doesn't contain any organisation's client ID, project or cluster names.
 
 ## Configuration
 
@@ -185,7 +257,7 @@ coverage report
 ## Requirements
 
 - Python 3.9+
-- kubectl configured with cluster access
+- kubectl configured with cluster access (1.22 or later for `kubectl-login`)
 - gcloud CLI configured and authenticated
 - Helm 3.x
 
