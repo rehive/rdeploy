@@ -67,6 +67,22 @@ your organisation exempts from CBA instead. It asks only for
 identify you to the clusters, where Kubernetes RBAC decides what you can do,
 and nothing else in Google Cloud.
 
+The exemption is narrow and doesn't stand alone. Access to the clusters stays
+layered:
+
+- **Network isolation:** the control plane should have only a private
+  endpoint, reachable from your private network through a bastion or similar
+  access gateway, and limited to authorised networks. A token alone doesn't
+  reach the cluster.
+- **Least privilege:** the token can identify you and read GKE metadata, but
+  can't call any other Google Cloud API or change clusters through the GKE API.
+- **Device trust:** the OAuth client is fetched from Secret Manager with your
+  gcloud login, which still needs your device certificate.
+- **Short sessions:** your organisation sets how long a sign-in lasts (often
+  12 hours), so a copied credentials file stops working soon after.
+- **Kubernetes RBAC and audit logs:** what you can do inside a cluster, and
+  the record of what you did, are unchanged.
+
 It:
 
 1. reads the OAuth client from Secret Manager with your gcloud login (or from
@@ -137,8 +153,10 @@ The command expects a Desktop app OAuth client, exempted from CBA in your
 access levels, limited to the scopes above, and stored as JSON (the file the
 Cloud console downloads) in a Secret Manager secret your developers can read,
 named `kubectl-oauth-client` in the project your `rdeploy.yaml` files name
-unless you tell developers otherwise.
-It doesn't contain any organisation's client ID, project or cluster names.
+unless you tell developers otherwise. Keep the session length short in the
+app's session control, keep the control plane on a private endpoint behind
+your access gateway, and leave CBA enforced for everything else.
+rdeploy doesn't contain any organisation's client ID, project or cluster names.
 
 ## Configuration
 

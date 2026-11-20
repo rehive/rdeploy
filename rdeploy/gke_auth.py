@@ -7,6 +7,13 @@ instead exempt a dedicated OAuth client from CBA and limit it to the
 `container.read-only` scope. This module signs in through that client and
 points the GKE contexts in your kubeconfig at the resulting credentials.
 
+The exemption narrows one control; it doesn't replace the others. The tokens
+can't call any Google Cloud API beyond reading GKE metadata, Kubernetes RBAC
+still decides what each person can do in a cluster, and the clusters should
+stay reachable only from a private network: a private control-plane endpoint,
+reached through a bastion or similar access gateway, with an authorised
+network allowlist.
+
 Nothing organisation-specific lives here: the GCP project, the Secret Manager
 secret holding the OAuth client and the clusters all come from flags,
 environment variables, the user's saved settings or the project's
