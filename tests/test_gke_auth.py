@@ -470,6 +470,69 @@ class TestEnsureGcloudLogin:
         assert mock_run.call_args_list[0][0][0] == ['gcloud', 'auth', 'print-access-token']
         assert mock_run.call_args_list[2][0][0] == ['gcloud', 'auth', 'login']
 
+    EXPIRED = 'There was a problem refreshing your current auth tokens. Please run: gcloud auth login'
+
+    @patch('rdeploy.gke_auth.sys.stdin')
+    @patch('rdeploy.gke_auth.input', create=True, return_value='y')
+    @patch('rdeploy.gke_auth.subprocess.run')
+    def test_ask_yes_runs_login(self, mock_run, mock_input, mock_stdin):
+        mock_stdin.isatty.return_value = True
+        mock_run.side_effect = [completed(returncode=1, stderr=self.EXPIRED), completed()]
+        gke_auth.ensure_gcloud_login('me@example.test', ask=True)
+        assert 'me@example.test' in mock_input.call_args[0][0]
+        assert '[y/N]' in mock_input.call_args[0][0]
+        assert mock_run.call_args_list[1][0][0] == ['gcloud', 'auth', 'login', 'me@example.test']
+
+    @pytest.mark.parametrize('answer', ['', 'n', 'no', 'maybe'])
+    @patch('rdeploy.gke_auth.sys.stdin')
+    @patch('rdeploy.gke_auth.subprocess.run')
+    def test_ask_anything_but_yes_stops(self, mock_run, mock_stdin, answer):
+        mock_stdin.isatty.return_value = True
+        mock_run.side_effect = [completed(returncode=1, stderr=self.EXPIRED)]
+        with patch('rdeploy.gke_auth.input', create=True, return_value=answer):
+            with pytest.raises(gke_auth.GcloudLoginError,
+                               match='Run `gcloud auth login me@example.test`, then run this command again'):
+                gke_auth.ensure_gcloud_login('me@example.test', ask=True)
+        assert mock_run.call_count == 1  # no browser
+
+    @patch('rdeploy.gke_auth.gcloud_account', return_value='')
+    @patch('rdeploy.gke_auth.sys.stdin')
+    @patch('rdeploy.gke_auth.subprocess.run')
+    def test_ask_without_terminal_stops_without_asking(self, mock_run, mock_stdin, _account):
+        mock_stdin.isatty.return_value = False
+        mock_run.side_effect = [completed(returncode=1, stderr=self.EXPIRED)]
+        with patch('rdeploy.gke_auth.input', create=True) as mock_input:
+            with pytest.raises(gke_auth.GcloudLoginError, match='expired'):
+                gke_auth.ensure_gcloud_login(ask=True)
+        mock_input.assert_not_called()
+        assert mock_run.call_count == 1
+
+    @patch('rdeploy.gke_auth.gcloud_account', return_value='active@example.test')
+    @patch('rdeploy.gke_auth.sys.stdin')
+    @patch('rdeploy.gke_auth.subprocess.run')
+    def test_ask_names_the_active_account(self, mock_run, mock_stdin, _account):
+        mock_stdin.isatty.return_value = True
+        mock_run.side_effect = [completed(returncode=1, stderr=self.EXPIRED)]
+        with patch('rdeploy.gke_auth.input', create=True, return_value='') as mock_input:
+            with pytest.raises(gke_auth.GcloudLoginError):
+                gke_auth.ensure_gcloud_login(ask=True)
+        assert 'active@example.test' in mock_input.call_args[0][0]
+
+    @patch('rdeploy.gke_auth.sys.stdin')
+    @patch('rdeploy.gke_auth.subprocess.run')
+    def test_ask_signed_in_asks_nothing(self, mock_run, mock_stdin):
+        mock_run.return_value = completed('token')
+        with patch('rdeploy.gke_auth.input', create=True) as mock_input:
+            gke_auth.ensure_gcloud_login(ask=True)
+        mock_input.assert_not_called()
+
+    def test_ask_yes_no_eof_is_no(self):
+        with patch('rdeploy.gke_auth.input', create=True, side_effect=EOFError):
+            assert gke_auth.ask_yes_no('?') is False
+
+    def test_login_error_is_a_kubectl_login_error(self):
+        assert issubclass(gke_auth.GcloudLoginError, KubectlLoginError)
+
     @patch('rdeploy.gke_auth.subprocess.run')
     def test_login_fails(self, mock_run):
         mock_run.side_effect = [completed(returncode=1, stderr='no credentialed accounts'), completed(returncode=1)]
