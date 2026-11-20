@@ -130,6 +130,10 @@ kubectl fails with an authentication error such as `invalid_grant` or
 rdeploy kubectl-login
 ```
 
+If gcloud's own login has expired too, rdeploy signs gcloud in first: gcloud
+asks for your password in the terminal, or opens the browser for
+`gcloud auth login`.
+
 To check whether the saved session is still valid (exits non-zero if not):
 
 ```bash

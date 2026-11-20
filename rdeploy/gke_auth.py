@@ -179,6 +179,32 @@ def run_gcloud(cmd):
     return subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
 
 
+def ensure_gcloud_login(account=None):
+    """
+    Make sure gcloud can get a token for `account` (default: the active
+    account) before rdeploy uses it, signing gcloud in again if needed.
+
+    A password or security-key reauthentication is left to gcloud, which
+    prompts for it in the terminal. When gcloud's login has expired, or there
+    is none, run `gcloud auth login`, which signs in through the browser.
+    """
+    account_flag = [f'--account={account}'] if account else []
+    # The token itself is never needed: it goes to /dev/null, so rdeploy never
+    # holds it. Only the exit code and gcloud's error matter.
+    token_cmd = ['gcloud', 'auth', 'print-access-token', *account_flag]
+    check = subprocess.run(token_cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, text=True)
+    if check.returncode == 0:
+        return
+    if ('reauth' in check.stderr.lower()
+            and subprocess.run(token_cmd, stdout=subprocess.DEVNULL).returncode == 0):
+        return
+    print('gcloud needs you to sign in again. Opening your browser for gcloud first.', flush=True)
+    login_cmd = ['gcloud', 'auth', 'login'] + ([account] if account else [])
+    if subprocess.run(login_cmd).returncode != 0:
+        raise KubectlLoginError('gcloud sign-in failed; gcloud\'s error is above.')
+
+
 def load_client(project, secret, account=None, client_json=None):
     """Read the OAuth client from a local file, or from Secret Manager with the user's gcloud login."""
     if client_json:
@@ -479,6 +505,10 @@ def login(project=None, secret=None, account=None, clusters=None, client_json=No
           skip_kubeconfig=False, open_browser=webbrowser.open):
     check_tools(need_kubeconfig=not skip_kubeconfig)
     settings = resolve_settings(project, secret, account, clusters)
+
+    # gcloud reads the OAuth client and lists the clusters.
+    if not (client_json and skip_kubeconfig):
+        ensure_gcloud_login(settings['account'])
 
     client = load_client(settings['project'], settings['secret'], settings['account'], client_json)
     token = sign_in(client, settings['account'] or gcloud_account(), open_browser)

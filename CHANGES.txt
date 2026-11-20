@@ -1,3 +1,12 @@
+Version 0.5.2, unreleased
+===============================
+- `rdeploy kubectl-login` now signs gcloud in again when it needs to, before
+  reading the OAuth client. A password or security-key reauthentication is
+  prompted in the terminal as before; when gcloud's login has expired or
+  there is none, it runs `gcloud auth login` (browser) for you instead of
+  failing with "please run gcloud auth login".
+
+----
 Version 0.5.1, unreleased
 ===============================
 - `rdeploy kubectl-login` no longer fails when gcloud needs you to
