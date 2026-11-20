@@ -170,6 +170,15 @@ def _installed_client(data, source):
     return client
 
 
+def run_gcloud(cmd):
+    """
+    Run a gcloud command, capturing only its output. Its prompts and errors go
+    to the terminal, so gcloud can ask for a password when the login needs
+    reauthentication; with stderr captured it refuses to prompt.
+    """
+    return subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
+
+
 def load_client(project, secret, account=None, client_json=None):
     """Read the OAuth client from a local file, or from Secret Manager with the user's gcloud login."""
     if client_json:
@@ -180,12 +189,12 @@ def load_client(project, secret, account=None, client_json=None):
            f'--secret={secret}', f'--project={project}']
     if account:
         cmd.append(f'--account={account}')
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = run_gcloud(cmd)
     if result.returncode != 0:
         raise KubectlLoginError(
             'Couldn\'t read the OAuth client from Secret Manager'
-            f' (secret {secret} in project {project}):\n{result.stderr.strip()}\n'
-            'Check that gcloud is signed in with your work account and uses your'
+            f' (secret {secret} in project {project}); gcloud\'s error is above.'
+            ' Check that gcloud is signed in with your work account and uses your'
             ' device certificate (`gcloud auth list`).')
     try:
         data = json.loads(result.stdout)
@@ -370,10 +379,10 @@ def list_clusters(project, account=None):
            '--format=json(name,location)']
     if account:
         cmd.append(f'--account={account}')
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = run_gcloud(cmd)
     if result.returncode != 0:
         raise KubectlLoginError(
-            f'Couldn\'t list the GKE clusters in {project}:\n{result.stderr.strip()}')
+            f'Couldn\'t list the GKE clusters in {project}; gcloud\'s error is above.')
     return [(c['name'], c['location']) for c in json.loads(result.stdout or '[]')]
 
 
@@ -408,10 +417,10 @@ def get_credentials(project, location, name, account=None):
     if account:
         cmd.append(f'--account={account}')
     print('Adding {} to your kubeconfig'.format(name), flush=True)
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = run_gcloud(cmd)
     if result.returncode != 0:
         raise KubectlLoginError(
-            f'Couldn\'t add cluster {name} to your kubeconfig:\n{result.stderr.strip()}')
+            f'Couldn\'t add cluster {name} to your kubeconfig; gcloud\'s error is above.')
 
 
 def configure_kubeconfig(project, creds_path, account=None, only_clusters=()):

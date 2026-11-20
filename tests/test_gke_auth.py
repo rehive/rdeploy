@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+import subprocess
 import threading
 import urllib.error
 import urllib.parse
@@ -126,9 +127,20 @@ class TestLoadClient:
 
     @patch('rdeploy.gke_auth.subprocess.run')
     def test_secret_manager_error(self, mock_run):
-        mock_run.return_value = completed(returncode=1, stderr='PERMISSION_DENIED')
-        with pytest.raises(KubectlLoginError, match='PERMISSION_DENIED'):
+        mock_run.return_value = completed(returncode=1)
+        with pytest.raises(KubectlLoginError, match='secret s in project p'):
             gke_auth.load_client('p', 's')
+
+    @patch('rdeploy.gke_auth.subprocess.run')
+    def test_gcloud_can_prompt_for_reauth(self, mock_run):
+        # gcloud only prompts for a password when stdin and stderr are the
+        # terminal, so neither may be captured.
+        mock_run.return_value = completed(json.dumps({'installed': CLIENT}))
+        gke_auth.load_client('p', 's')
+        kwargs = mock_run.call_args[1]
+        assert kwargs['stdout'] == subprocess.PIPE
+        assert 'stderr' not in kwargs and 'stdin' not in kwargs
+        assert 'capture_output' not in kwargs
 
 
 # Sign-in

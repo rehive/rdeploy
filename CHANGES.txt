@@ -1,3 +1,12 @@
+Version 0.5.1, unreleased
+===============================
+- `rdeploy kubectl-login` no longer fails when gcloud needs you to
+  reauthenticate ("Reauthentication failed. cannot prompt during
+  non-interactive execution"). It now lets gcloud's prompts and errors reach
+  the terminal, so gcloud can ask for your password, and only captures
+  gcloud's output.
+
+----
 Version 0.5.0, Fri 20 Nov 2026
 ===============================
 - New `rdeploy kubectl-login` signs kubectl in to GKE under Google Cloud
