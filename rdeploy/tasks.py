@@ -363,6 +363,10 @@ def resolve_helm_chart(config_dict):
                            config_dict['helm_chart_version'])
     except ChartFetchError as err:
         sys.exit('Could not download the Helm chart: {err}'.format(err=err))
+    # invoke runs commands through sh, or cmd.exe on Windows, which needs
+    # double quotes rather than single quotes around a path.
+    if sys.platform == 'win32':
+        return subprocess.list2cmdline([path]), ''
     return shlex.quote(path), ''
 
 

@@ -196,6 +196,18 @@ class TestResolveHelmChart:
         with patch('rdeploy.tasks.fetch_chart', return_value='/tmp/a b/chart.tgz'):
             assert resolve_helm_chart(registry_config())[0] == "'/tmp/a b/chart.tgz'"
 
+    def test_windows_path_is_double_quoted(self):
+        path = r'C:\Users\a b\AppData\Local\Temp\rdeploy-chart-x\chart.tgz'
+        with patch('rdeploy.tasks.fetch_chart', return_value=path), \
+                patch('rdeploy.tasks.sys.platform', 'win32'):
+            assert resolve_helm_chart(registry_config())[0] == '"{}"'.format(path)
+
+    def test_windows_path_without_spaces_is_unquoted(self):
+        path = r'C:\Temp\rdeploy-chart-x\chart.tgz'
+        with patch('rdeploy.tasks.fetch_chart', return_value=path), \
+                patch('rdeploy.tasks.sys.platform', 'win32'):
+            assert resolve_helm_chart(registry_config())[0] == path
+
     def test_download_failure_exits(self):
         with patch('rdeploy.tasks.fetch_chart', side_effect=ChartFetchError('boom')):
             with pytest.raises(SystemExit, match='Could not download the Helm chart: boom'):
