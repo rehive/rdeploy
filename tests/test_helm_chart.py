@@ -15,6 +15,7 @@ from rdeploy.helm_chart import (
     registry_location,
     split_chart,
 )
+from rdeploy.gke_auth import GcloudLoginError
 from rdeploy.tasks import install, resolve_helm_chart, upgrade
 
 CHART = b'fake chart archive'
@@ -101,6 +102,13 @@ class TestParsing:
             chart_layer_digest(str(path))
 
 
+@pytest.fixture
+def gcloud_signed_in():
+    with patch('rdeploy.helm_chart.ensure_gcloud_login') as ensure:
+        yield ensure
+
+
+@pytest.mark.usefixtures('gcloud_signed_in')
 class TestFetchChart:
     def test_downloads_and_verifies_chart(self, tmp_path):
         gcloud = FakeGcloud()
@@ -133,6 +141,26 @@ class TestFetchChart:
         for call in run.call_args_list:
             assert 'stderr' not in call.kwargs
             assert 'stdin' not in call.kwargs
+
+    def test_downloads_are_quiet(self, tmp_path):
+        gcloud = FakeGcloud()
+        fetch(tmp_path, gcloud)
+        for call in gcloud.calls[1:]:
+            assert '--no-user-output-enabled' in call
+
+    def test_checks_gcloud_login_first_and_asks(self, tmp_path, gcloud_signed_in):
+        gcloud = FakeGcloud()
+        gcloud_signed_in.side_effect = lambda **kwargs: gcloud.calls.append('login check')
+        fetch(tmp_path, gcloud)
+        gcloud_signed_in.assert_called_once_with(ask=True)
+        assert gcloud.calls[0] == 'login check'
+
+    def test_declined_login_stops_before_downloading(self, tmp_path, gcloud_signed_in):
+        gcloud = FakeGcloud()
+        gcloud_signed_in.side_effect = GcloudLoginError('Run `gcloud auth login`, then run this command again.')
+        with pytest.raises(ChartFetchError, match='gcloud auth login'):
+            fetch(tmp_path, gcloud)
+        assert gcloud.calls == []
 
     def test_rejects_tampered_chart(self, tmp_path):
         gcloud = FakeGcloud()

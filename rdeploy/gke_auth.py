@@ -58,6 +58,10 @@ class KubectlLoginError(Exception):
     pass
 
 
+class GcloudLoginError(KubectlLoginError):
+    """gcloud is not signed in and rdeploy did not sign it in."""
+
+
 # Paths and saved settings
 ##########################
 
@@ -179,7 +183,16 @@ def run_gcloud(cmd):
     return subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
 
 
-def ensure_gcloud_login(account=None):
+def ask_yes_no(question):
+    """Ask in the terminal; only an explicit yes counts, so Enter means no."""
+    try:
+        answer = input(question + ' [y/N] ')
+    except EOFError:
+        return False
+    return answer.strip().lower() in ('y', 'yes')
+
+
+def ensure_gcloud_login(account=None, ask=False):
     """
     Make sure gcloud can get a token for `account` (default: the active
     account) before rdeploy uses it, signing gcloud in again if needed.
@@ -187,6 +200,10 @@ def ensure_gcloud_login(account=None):
     A password or security-key reauthentication is left to gcloud, which
     prompts for it in the terminal. When gcloud's login has expired, or there
     is none, run `gcloud auth login`, which signs in through the browser.
+
+    With `ask`, rdeploy asks before opening the browser, and without a
+    terminal to ask in it stops instead. Commands that are not themselves a
+    sign-in, such as a deploy, use this.
     """
     account_flag = [f'--account={account}'] if account else []
     # The token itself is never needed: it goes to /dev/null, so rdeploy never
@@ -199,10 +216,20 @@ def ensure_gcloud_login(account=None):
     if ('reauth' in check.stderr.lower()
             and subprocess.run(token_cmd, stdout=subprocess.DEVNULL).returncode == 0):
         return
-    print('gcloud needs you to sign in again. Opening your browser for gcloud first.', flush=True)
     login_cmd = ['gcloud', 'auth', 'login'] + ([account] if account else [])
+    if ask:
+        who = account or gcloud_account()
+        expired = 'Your gcloud login{who} has expired or is missing.'.format(
+            who=' for {0}'.format(who) if who else '')
+        if not (sys.stdin.isatty() and ask_yes_no(
+                expired + ' Sign in again now with `gcloud auth login`?')):
+            raise GcloudLoginError(
+                '{expired} Run `{cmd}`, then run this command again.'.format(
+                    expired=expired, cmd=' '.join(login_cmd)))
+    else:
+        print('gcloud needs you to sign in again. Opening your browser for gcloud first.', flush=True)
     if subprocess.run(login_cmd).returncode != 0:
-        raise KubectlLoginError('gcloud sign-in failed; gcloud\'s error is above.')
+        raise GcloudLoginError('gcloud sign-in failed; gcloud\'s error is above.')
 
 
 def load_client(project, secret, account=None, client_json=None):

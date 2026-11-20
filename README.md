@@ -259,6 +259,10 @@ organization requires certificate-based access, where Artifact Registry
 rejects Helm's own login. You need read access to the repository
 (`roles/artifactregistry.reader`).
 
+If gcloud's login has expired, rdeploy asks before running `gcloud auth
+login`. Without a terminal, such as in a script, it stops and tells you to
+run it.
+
 ## Versioning
 
 rdeploy uses semantic versioning for releases. The `git-release` command automates tagging:

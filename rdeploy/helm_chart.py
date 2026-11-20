@@ -19,6 +19,8 @@ import shutil
 import subprocess
 import tempfile
 
+from rdeploy.gke_auth import GcloudLoginError, ensure_gcloud_login
+
 CHART_LAYER_MEDIA_TYPE = 'application/vnd.cncf.helm.chart.content.v1.tar+gzip'
 REGISTRY_HOST = re.compile(r'^(?:https?://)?(?P<location>[a-z0-9-]+)-docker\.pkg\.dev/?$')
 
@@ -88,6 +90,8 @@ def download_file(project, location, repository, name, destination, filename):
         '--destination={0}'.format(destination),
         '--local-filename={0}'.format(filename),
         '--allow-overwrite',
+        # No progress boxes; gcloud's errors still print.
+        '--no-user-output-enabled',
     ])
     return os.path.join(destination, filename)
 
@@ -128,6 +132,13 @@ def fetch_chart(helm_registry, project, helm_chart, chart_version, destination=N
     if destination is None:
         destination = tempfile.mkdtemp(prefix='rdeploy-chart-')
         atexit.register(shutil.rmtree, destination, True)
+
+    # Before anything else, so an expired login is caught while nothing has
+    # happened yet, and the user is asked before a browser opens.
+    try:
+        ensure_gcloud_login(ask=True)
+    except GcloudLoginError as err:
+        raise ChartFetchError(str(err))
 
     print('Downloading chart {chart} {version} with gcloud'.format(
         chart=helm_chart, version=chart_version), flush=True)

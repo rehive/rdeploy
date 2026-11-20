@@ -1,3 +1,13 @@
+Version 0.5.4, unreleased
+===============================
+- `rdeploy install` and `rdeploy upgrade` check gcloud's login before
+  downloading a chart from Artifact Registry. When the login has expired or
+  is missing, they ask before running `gcloud auth login` (Enter means no),
+  and without a terminal they stop with the command to run. A password or
+  security-key reauthentication is still prompted by gcloud as before.
+- Chart downloads no longer print gcloud's progress boxes; errors still show.
+
+----
 Version 0.5.3, unreleased
 ===============================
 - `rdeploy install` and `rdeploy upgrade` now download charts from Artifact
