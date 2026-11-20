@@ -1,3 +1,13 @@
+Version 0.5.3, unreleased
+===============================
+- `rdeploy install` and `rdeploy upgrade` now download charts from Artifact
+  Registry (`helm_registry`) with gcloud and pass Helm the local archive,
+  checked against the chart's digest. They no longer run `helm registry
+  login`, which fails with "401: unauthorized: authentication failed" when
+  the organization requires certificate-based access. Charts from other
+  Helm repositories are unchanged.
+
+----
 Version 0.5.2, unreleased
 ===============================
 - `rdeploy kubectl-login` now signs gcloud in again when it needs to, before
