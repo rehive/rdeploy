@@ -370,6 +370,27 @@ class TestLogin:
     def in_tmp_dir(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
 
+    @pytest.fixture(autouse=True)
+    def gcloud_signed_in(self):
+        with patch('rdeploy.gke_auth.ensure_gcloud_login') as ensure:
+            yield ensure
+
+    def test_checks_gcloud_login_first(self, gcloud_signed_in):
+        with patch('rdeploy.gke_auth.check_tools'), \
+                patch('rdeploy.gke_auth.load_client', return_value=CLIENT), \
+                patch('rdeploy.gke_auth.sign_in', return_value={'refresh_token': 'r'}), \
+                patch('rdeploy.gke_auth.configure_kubeconfig', return_value=['ctx']):
+            gke_auth.login(project='p', secret='s', account='me@example.test')
+        gcloud_signed_in.assert_called_once_with('me@example.test')
+
+    def test_no_gcloud_needed_with_local_client_and_no_kubeconfig(self, gcloud_signed_in, tmp_path):
+        path = tmp_path / 'client.json'
+        path.write_text(json.dumps({'installed': CLIENT}))
+        with patch('rdeploy.gke_auth.check_tools'), \
+                patch('rdeploy.gke_auth.sign_in', return_value={'refresh_token': 'r'}):
+            gke_auth.login(project='p', secret='s', client_json=str(path), skip_kubeconfig=True)
+        gcloud_signed_in.assert_not_called()
+
     @patch('rdeploy.gke_auth.configure_kubeconfig', return_value=['ctx'])
     @patch('rdeploy.gke_auth.sign_in', return_value={'refresh_token': 'r'})
     @patch('rdeploy.gke_auth.load_client', return_value=CLIENT)
@@ -397,3 +418,56 @@ class TestLogin:
             raise KubectlLoginError('explained')
         with pytest.raises(SystemExit, match='explained'):
             gke_auth.run(fail)
+
+
+# gcloud login
+##############
+
+class TestEnsureGcloudLogin:
+    TOKEN = ['gcloud', 'auth', 'print-access-token', '--account=me@example.test']
+
+    @patch('rdeploy.gke_auth.subprocess.run')
+    def test_signed_in(self, mock_run):
+        mock_run.return_value = completed('token')
+        gke_auth.ensure_gcloud_login('me@example.test')
+        assert mock_run.call_count == 1
+        assert mock_run.call_args[0][0] == self.TOKEN
+        assert mock_run.call_args[1]['stdin'] == subprocess.DEVNULL
+
+    @patch('rdeploy.gke_auth.subprocess.run')
+    def test_reauth_prompts_in_the_terminal(self, mock_run):
+        mock_run.side_effect = [
+            completed(returncode=1, stderr='Reauthentication failed. cannot prompt during non-interactive execution.'),
+            completed('token'),
+        ]
+        gke_auth.ensure_gcloud_login('me@example.test')
+        retry = mock_run.call_args_list[1]
+        assert retry[0][0] == self.TOKEN
+        assert 'stderr' not in retry[1] and 'stdin' not in retry[1]
+
+    @patch('rdeploy.gke_auth.subprocess.run')
+    def test_expired_login_runs_gcloud_auth_login(self, mock_run, capsys):
+        mock_run.side_effect = [
+            completed(returncode=1, stderr='There was a problem refreshing your current auth tokens. Please run: gcloud auth login'),
+            completed(),
+        ]
+        gke_auth.ensure_gcloud_login('me@example.test')
+        assert mock_run.call_args_list[1][0][0] == ['gcloud', 'auth', 'login', 'me@example.test']
+        assert 'sign in again' in capsys.readouterr().out
+
+    @patch('rdeploy.gke_auth.subprocess.run')
+    def test_failed_reauth_falls_back_to_login(self, mock_run):
+        mock_run.side_effect = [
+            completed(returncode=1, stderr='reauth related error (invalid_rapt)'),
+            completed(returncode=1),
+            completed(),
+        ]
+        gke_auth.ensure_gcloud_login()
+        assert mock_run.call_args_list[0][0][0] == ['gcloud', 'auth', 'print-access-token']
+        assert mock_run.call_args_list[2][0][0] == ['gcloud', 'auth', 'login']
+
+    @patch('rdeploy.gke_auth.subprocess.run')
+    def test_login_fails(self, mock_run):
+        mock_run.side_effect = [completed(returncode=1, stderr='no credentialed accounts'), completed(returncode=1)]
+        with pytest.raises(KubectlLoginError, match='gcloud sign-in failed'):
+            gke_auth.ensure_gcloud_login()
