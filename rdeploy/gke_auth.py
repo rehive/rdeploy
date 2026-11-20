@@ -189,11 +189,15 @@ def ensure_gcloud_login(account=None):
     is none, run `gcloud auth login`, which signs in through the browser.
     """
     account_flag = [f'--account={account}'] if account else []
+    # The token itself is never needed: it goes to /dev/null, so rdeploy never
+    # holds it. Only the exit code and gcloud's error matter.
     token_cmd = ['gcloud', 'auth', 'print-access-token', *account_flag]
-    check = subprocess.run(token_cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    check = subprocess.run(token_cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, text=True)
     if check.returncode == 0:
         return
-    if 'reauth' in check.stderr.lower() and run_gcloud(token_cmd).returncode == 0:
+    if ('reauth' in check.stderr.lower()
+            and subprocess.run(token_cmd, stdout=subprocess.DEVNULL).returncode == 0):
         return
     print('gcloud needs you to sign in again. Opening your browser for gcloud first.', flush=True)
     login_cmd = ['gcloud', 'auth', 'login'] + ([account] if account else [])

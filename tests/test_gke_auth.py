@@ -432,7 +432,10 @@ class TestEnsureGcloudLogin:
         gke_auth.ensure_gcloud_login('me@example.test')
         assert mock_run.call_count == 1
         assert mock_run.call_args[0][0] == self.TOKEN
-        assert mock_run.call_args[1]['stdin'] == subprocess.DEVNULL
+        kwargs = mock_run.call_args[1]
+        assert kwargs['stdin'] == subprocess.DEVNULL
+        assert kwargs['stdout'] == subprocess.DEVNULL  # the token is discarded
+        assert kwargs['stderr'] == subprocess.PIPE
 
     @patch('rdeploy.gke_auth.subprocess.run')
     def test_reauth_prompts_in_the_terminal(self, mock_run):
@@ -444,6 +447,7 @@ class TestEnsureGcloudLogin:
         retry = mock_run.call_args_list[1]
         assert retry[0][0] == self.TOKEN
         assert 'stderr' not in retry[1] and 'stdin' not in retry[1]
+        assert retry[1]['stdout'] == subprocess.DEVNULL
 
     @patch('rdeploy.gke_auth.subprocess.run')
     def test_expired_login_runs_gcloud_auth_login(self, mock_run, capsys):
