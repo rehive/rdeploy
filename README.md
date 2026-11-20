@@ -183,7 +183,7 @@ configs:
       region: us-central1
       helm_registry: us-central1-docker.pkg.dev
     helm_values_path: ./etc/helm/staging/values.yaml
-    helm_chart: rehive-service
+    helm_chart: helm-charts/rehive-service
     helm_chart_version: 0.2.0
     helm_version: 3.14.0
     use_system_helm: true
@@ -200,7 +200,7 @@ configs:
       region: us-central1
       helm_registry: us-central1-docker.pkg.dev
     helm_values_path: ./etc/helm/production/values.yaml
-    helm_chart: rehive-service
+    helm_chart: helm-charts/rehive-service
     helm_chart_version: 0.2.0
     helm_version: 3.14.0
     use_system_helm: true
@@ -242,12 +242,22 @@ configs:
 | `cloud_provider.kube_cluster` | Kubernetes cluster name |
 | `cloud_provider.region` | GCP region |
 | `cloud_provider.zone` | GCP zone (alternative to region) |
-| `cloud_provider.helm_registry` | OCI Helm registry (GCP Artifact Registry) |
+| `cloud_provider.helm_registry` | Artifact Registry host for Helm charts, e.g. `us-central1-docker.pkg.dev`. When set, the chart is downloaded with gcloud (see below) |
 | `helm_values_path` | Path to Helm values file |
-| `helm_chart` | Helm chart name or OCI reference |
+| `helm_chart` | Helm chart name; `REPOSITORY/CHART` when `helm_registry` is set |
 | `helm_chart_version` | Helm chart version |
 | `helm_version` | Helm binary version (for local installs) |
 | `use_system_helm` | Use system Helm binary (default: `true`) |
+
+#### Charts in Artifact Registry
+
+With `helm_registry` set, `install` and `upgrade` download the chart with
+gcloud instead of logging Helm in to the registry: they resolve
+`helm_chart_version` to a digest, download the chart, check it against the
+digest, and pass Helm the local archive. This also works when the
+organization requires certificate-based access, where Artifact Registry
+rejects Helm's own login. You need read access to the repository
+(`roles/artifactregistry.reader`).
 
 ## Versioning
 

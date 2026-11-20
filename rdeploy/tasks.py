@@ -17,6 +17,7 @@ import re
 from packaging import version
 from rdeploy.exceptions import ReleaseError, ExecuteError
 from rdeploy import gke_auth
+from rdeploy.helm_chart import fetch_chart, ChartFetchError
 
 from rdeploy.utils import (get_settings, confirm, get_helm_bin, get_helm_os_string,
                            yaml_decode_data_fields, build_management_cmd,
@@ -342,6 +343,29 @@ def create_public_bucket(ctx, config, bucket_name):
             .format(bucket_name=bucket_name))
 
 
+def resolve_helm_chart(config_dict):
+    """
+    Return the chart for helm install/upgrade and its --version flag.
+
+    A chart in Artifact Registry (cloud_provider.helm_registry) is downloaded
+    with gcloud, which works under certificate-based access where Helm's own
+    registry login is rejected. Helm then gets the local archive, which is
+    already the configured version, so no --version flag is passed.
+    """
+    provider_data = config_dict.get('cloud_provider') or {}
+    helm_registry = provider_data.get('helm_registry')
+    if not helm_registry:
+        return (config_dict['helm_chart'],
+                ' --version {0}'.format(config_dict['helm_chart_version']))
+    try:
+        path = fetch_chart(helm_registry, provider_data['project'],
+                           config_dict['helm_chart'],
+                           config_dict['helm_chart_version'])
+    except ChartFetchError as err:
+        sys.exit('Could not download the Helm chart: {err}'.format(err=err))
+    return shlex.quote(path), ''
+
+
 @task
 def install(ctx, config):
     """
@@ -358,28 +382,22 @@ def install(ctx, config):
     if config_dict.get('helm_version') and version.parse(str(config_dict['helm_version'])) <= version.parse('3'):
         install_flag = " --name"
 
-    provider_data = config_dict.get('cloud_provider')
-    helm_registry = provider_data.get('helm_registry')
-    if helm_registry:
-        # Authenticate with the GCP Artifact Registry
-        ctx.run('gcloud auth print-access-token | {helm_bin} registry login -u oauth2accesstoken --password-stdin https://{helm_registry}'.format(helm_registry=helm_registry, helm_bin=helm_bin), echo=True)
-        helm_chart = 'oci://{helm_registry}/{gcp_project}/{helm_chart}'.format(helm_registry=helm_registry, gcp_project=provider_data['project'], helm_chart=config_dict['helm_chart'])
-    else:
+    if not (config_dict.get('cloud_provider') or {}).get('helm_registry'):
         # Add the Rehive Helm Repo
         ctx.run('{helm_bin} repo add rehive https://rehive.github.io/charts'.format(helm_bin=helm_bin), echo=True)
-        helm_chart = config_dict['helm_chart']
+    helm_chart, version_flag = resolve_helm_chart(config_dict)
 
     ctx.run('{helm_bin} install{helm_install_flag} {project_name} '
             '{target} '
-            '--values {helm_values_path} '
-            '--version {helm_chart_version} {helm_chart}'
+            '--values {helm_values_path}'
+            '{version_flag} {helm_chart}'
             .format(helm_bin=helm_bin,
                     target=helm_target_flags(settings_dict, config_dict),
                     project_name=config_dict['project_name'],
                     helm_install_flag=install_flag,
                     helm_values_path=config_dict['helm_values_path'],
                     helm_chart=helm_chart,
-                    helm_chart_version=config_dict['helm_chart_version']),
+                    version_flag=version_flag),
             echo=True)
 
 
@@ -580,14 +598,7 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
 
     helm_bin = get_helm_bin(config_dict)
 
-    provider_data = config_dict.get('cloud_provider')
-    helm_registry = provider_data.get('helm_registry')
-    if helm_registry:
-        # Authenticate with the GCP Artifact Registry
-        ctx.run('gcloud auth print-access-token | {helm_bin} registry login -u oauth2accesstoken --password-stdin https://{helm_registry}'.format(helm_registry=helm_registry, helm_bin=helm_bin), echo=True)
-        helm_chart = 'oci://{helm_registry}/{gcp_project}/{helm_chart}'.format(helm_registry=helm_registry, gcp_project=provider_data['project'], helm_chart=config_dict['helm_chart'])
-    else:
-        helm_chart = config_dict['helm_chart']
+    helm_chart, version_flag = resolve_helm_chart(config_dict)
 
     atomic_flags = ' --atomic --timeout {timeout}'.format(timeout=timeout) if atomic else ''
 
@@ -618,15 +629,15 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
     helm_command = ('{helm_bin} upgrade {project_name} '
                     '{target} '
                     '--values {helm_values_path} '
-                    '--set image.tag={version} '
-                    '--version {helm_chart_version}{atomic_flags} {helm_chart}'
+                    '--set image.tag={version}'
+                    '{version_flag}{atomic_flags} {helm_chart}'
                     .format(helm_bin=helm_bin,
                             target=helm_target_flags(settings_dict, config_dict),
                             project_name=config_dict['project_name'],
                             helm_chart=helm_chart,
                             helm_values_path=config_dict['helm_values_path'],
                             version=tag,
-                            helm_chart_version=config_dict['helm_chart_version'],
+                            version_flag=version_flag,
                             atomic_flags=atomic_flags))
 
     # The helm call below is the sole source of truth for success/failure/
