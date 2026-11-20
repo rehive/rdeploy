@@ -1,4 +1,4 @@
-Version 0.5.0, unreleased
+Version 0.5.0, Fri 20 Nov 2026
 ===============================
 - New `rdeploy kubectl-login` signs kubectl in to GKE under Google Cloud
   certificate-based access (CBA). It reads a CBA-exempt Desktop OAuth client
