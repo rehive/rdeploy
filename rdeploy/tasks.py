@@ -16,6 +16,7 @@ import re
 
 from packaging import version
 from rdeploy.exceptions import ReleaseError, ExecuteError
+from rdeploy import gke_auth
 
 from rdeploy.utils import (get_settings, confirm, get_helm_bin, get_helm_os_string,
                            yaml_decode_data_fields, build_management_cmd,
@@ -136,6 +137,40 @@ def set_context(ctx, config):
     ctx.run('kubectl config set-context --current --namespace={namespace}'
             .format(namespace=shlex.quote(namespace)),
             echo=True)
+
+
+@task(iterable=['cluster'], help={
+    'gcp-project': 'GCP project with the GKE clusters and the OAuth client secret'
+                   ' (default: the project in ./rdeploy.yaml). Saved for next time.'
+                   ' Env: RDEPLOY_KUBECTL_PROJECT',
+    'secret': 'Secret Manager secret holding the OAuth client JSON'
+              ' (default: kubectl-oauth-client). Saved for next time.'
+              ' Env: RDEPLOY_KUBECTL_SECRET',
+    'account': 'Your work Google account: used for gcloud and preselected in'
+               ' the browser (default: the active gcloud account). Saved for next time.',
+    'cluster': 'Only configure this cluster (repeatable; default: every cluster'
+               ' in the project). Saved for next time.',
+    'client-json': 'Use a local OAuth client file instead of Secret Manager.',
+    'skip-kubeconfig': 'Only sign in; don\'t change kubeconfig.',
+    'status': 'Only check whether the saved session is still valid.',
+})
+def kubectl_login(ctx, gcp_project=None, secret=None, account=None, cluster=None,
+                  client_json=None, skip_kubeconfig=False, status=False):
+    """
+    Sign kubectl in to GKE under certificate-based access (CBA)
+
+    Signs in through a CBA-exempt OAuth client (read from Secret Manager)
+    asking only for `openid email container.read-only`, saves the credentials
+    and points the kubeconfig contexts of the project's GKE clusters at them.
+    Run it again when the session expires.
+    """
+    if status:
+        if not gke_auth.status():
+            sys.exit(1)
+        return
+    gke_auth.run(gke_auth.login,
+                 project=gcp_project, secret=secret, account=account, clusters=cluster,
+                 client_json=client_json, skip_kubeconfig=skip_kubeconfig)
 
 # Versioning Helpers
 ####################
