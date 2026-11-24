@@ -1,3 +1,14 @@
+Version 0.5.5, unreleased
+===============================
+- `rdeploy install` and `rdeploy upgrade` no longer need the
+  `containeranalysis.occurrences.list` permission to download a chart from
+  Artifact Registry. They used `gcloud artifacts docker images describe` to
+  find the chart's digest, which also queries Container Analysis, and failed
+  with "Permission 'containeranalysis.occurrences.list' denied" for anyone
+  without it. They now list the chart's versions instead, which only needs
+  read access to the repository.
+
+----
 Version 0.5.4, unreleased
 ===============================
 - `rdeploy install` and `rdeploy upgrade` check gcloud's login before

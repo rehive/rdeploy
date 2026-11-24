@@ -33,12 +33,13 @@ MANIFEST_DIGEST = 'sha256:' + hashlib.sha256(MANIFEST).hexdigest()
 class FakeGcloud:
     """Stands in for gcloud: resolves the tag and serves the stored files."""
 
-    def __init__(self, files=None, digest=MANIFEST_DIGEST, fail=False):
+    def __init__(self, files=None, digest=MANIFEST_DIGEST, tags=('1.2.0',), fail=False):
         self.files = files if files is not None else {
             'rehive-service/manifests/' + MANIFEST_DIGEST: MANIFEST,
             CHART_DIGEST: CHART,
         }
         self.digest = digest
+        self.tags = list(tags)
         self.fail = fail
         self.calls = []
 
@@ -46,8 +47,12 @@ class FakeGcloud:
         self.calls.append(cmd)
         if self.fail:
             return MagicMock(returncode=1, stdout='')
-        if cmd[1:5] == ['artifacts', 'docker', 'images', 'describe']:
-            return MagicMock(returncode=0, stdout=self.digest + '\n')
+        if cmd[1:5] == ['artifacts', 'docker', 'images', 'list']:
+            images = [
+                {'version': 'sha256:' + 'a' * 64, 'tags': ['1.2.0-rc1', '1.1.0']},
+                {'version': self.digest, 'tags': self.tags},
+            ]
+            return MagicMock(returncode=0, stdout=json.dumps(images))
         if cmd[1:4] == ['artifacts', 'files', 'download']:
             name = cmd[4]
             flags = dict(arg[2:].split('=', 1) for arg in cmd[5:] if '=' in arg)
@@ -120,8 +125,9 @@ class TestFetchChart:
     def test_gcloud_calls(self, tmp_path):
         gcloud = FakeGcloud()
         fetch(tmp_path, gcloud)
-        describe, manifest, chart = gcloud.calls
-        assert describe[5] == 'europe-west4-docker.pkg.dev/my-project/my-charts/rehive-service:1.2.0'
+        listing, manifest, chart = gcloud.calls
+        assert listing[5] == 'europe-west4-docker.pkg.dev/my-project/my-charts/rehive-service'
+        assert '--include-tags' in listing
         assert manifest[4] == 'rehive-service/manifests/' + MANIFEST_DIGEST
         assert chart[4] == CHART_DIGEST
         for call in (manifest, chart):
@@ -174,9 +180,30 @@ class TestFetchChart:
         with pytest.raises(ChartFetchError, match='Manifest digest mismatch'):
             fetch(tmp_path, gcloud)
 
+    def test_never_queries_container_analysis(self, tmp_path):
+        # `images describe` needs containeranalysis.occurrences.list.
+        gcloud = FakeGcloud()
+        fetch(tmp_path, gcloud)
+        assert not any(call[1:5] == ['artifacts', 'docker', 'images', 'describe']
+                       for call in gcloud.calls)
+        assert not any('--show-occurrences' in call for call in gcloud.calls)
+
+    def test_matches_tag_exactly(self, tmp_path):
+        gcloud = FakeGcloud(tags=['1.2.0-rc2', '1.2.0'])
+        assert fetch(tmp_path, gcloud).endswith('rehive-service-1.2.0.tgz')
+
+    def test_accepts_comma_separated_tags(self, tmp_path):
+        gcloud = FakeGcloud()
+        gcloud.tags = 'latest, 1.2.0'
+        assert fetch(tmp_path, gcloud).endswith('rehive-service-1.2.0.tgz')
+
     def test_unresolved_tag(self, tmp_path):
         with pytest.raises(ChartFetchError, match='digest'):
             fetch(tmp_path, FakeGcloud(digest=''))
+
+    def test_missing_tag(self, tmp_path):
+        with pytest.raises(ChartFetchError, match='1.2.0 to a digest'):
+            fetch(tmp_path, FakeGcloud(tags=['1.2.0-rc1']))
 
     def test_gcloud_failure(self, tmp_path):
         with pytest.raises(ChartFetchError, match='gcloud failed'):
