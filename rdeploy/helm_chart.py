@@ -69,16 +69,36 @@ def sha256_file(path):
 
 
 def resolve_digest(host, project, repository, package, chart_version):
-    image = '{host}/{project}/{repository}/{package}:{version}'.format(
-        host=host, project=project, repository=repository, package=package,
-        version=chart_version)
-    digest = run_gcloud([
-        'gcloud', 'artifacts', 'docker', 'images', 'describe', image,
-        '--format=value(image_summary.digest)',
-    ]).strip()
-    if not digest.startswith('sha256:'):
-        raise ChartFetchError('Could not resolve {image} to a digest.'.format(image=image))
-    return digest
+    """
+    Return the manifest digest the chart's version tag points to.
+
+    This lists the package's versions rather than running `gcloud artifacts
+    docker images describe`, which always queries Container Analysis as well
+    and so needs `containeranalysis.occurrences.list`, a permission deployers
+    may not have. Listing only needs read access to Artifact Registry.
+    """
+    package_path = '{host}/{project}/{repository}/{package}'.format(
+        host=host, project=project, repository=repository, package=package)
+    output = run_gcloud([
+        'gcloud', 'artifacts', 'docker', 'images', 'list', package_path,
+        '--include-tags',
+        '--format=json(version,tags)',
+    ])
+    try:
+        images = json.loads(output or '[]')
+    except ValueError:
+        raise ChartFetchError('Could not read the versions of {package}.'.format(
+            package=package_path))
+    for image in images:
+        tags = image.get('tags') or []
+        if isinstance(tags, str):
+            tags = [tag.strip() for tag in tags.split(',')]
+        if chart_version in tags:
+            digest = image.get('version') or ''
+            if digest.startswith('sha256:'):
+                return digest
+    raise ChartFetchError('Could not resolve {package}:{version} to a digest.'.format(
+        package=package_path, version=chart_version))
 
 
 def download_file(project, location, repository, name, destination, filename):
