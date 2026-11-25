@@ -868,3 +868,474 @@ class TestUploadStatic:
             'CLOUDSDK_STORAGE_PROCESS_COUNT': '4',
             'CLOUDSDK_STORAGE_THREAD_COUNT': '8',
         }
+
+
+# Secret Manager (`rdeploy secret ...`)
+#######################################
+import base64
+import io
+import subprocess
+
+from rdeploy import secret_manager as sm
+from rdeploy.main import secret_argv
+
+
+@pytest.fixture
+def secret_service(tmp_path, monkeypatch):
+    """A service checkout with rdeploy.yaml and a values file turning on
+    secretManager, as the cwd."""
+    values = tmp_path / "etc" / "helm" / "staging"
+    values.mkdir(parents=True)
+    (values / "values.yaml").write_text(yaml.dump({
+        "secretManager": {
+            "enabled": True,
+            "environment": "staging",
+            "keys": ["DJANGO_SECRET", "POSTGRES_PASSWORD"],
+        },
+    }))
+    settings = {
+        "version": "3",
+        "configs": {
+            "staging": {
+                "namespace": "my-service-staging",
+                "project_name": "my-service",
+                "kube_context": "gke_rehive-services_europe-west4_staging3",
+                "helm_values_path": "./etc/helm/staging/values.yaml",
+                "cloud_provider": {"name": "gcp", "project": "rehive-services",
+                                   "region": "europe-west4"},
+            }
+        },
+    }
+    (tmp_path / "rdeploy.yaml").write_text(yaml.dump(settings))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER", raising=False)
+    monkeypatch.setenv("GOOGLE_API_USE_CLIENT_CERTIFICATE", "true")
+    return tmp_path
+
+
+def _done(returncode=0, stdout=b'', stderr=b''):
+    return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+
+class FakeSecretManager:
+    """Stands in for subprocess.run: answers `gcloud secrets ...` from an
+    in-memory store and records every call."""
+
+    def __init__(self, versions=None):
+        # {secret name: [(version, state)]}
+        self.versions = versions or {}
+        self.added = {}
+        self.calls = []
+
+    def __call__(self, cmd, **kwargs):
+        self.calls.append((cmd, kwargs))
+        if cmd[:2] == ['gcloud', 'config']:
+            return subprocess.CompletedProcess(cmd, 0, 'false\n', '')
+        assert cmd[:2] == ['gcloud', 'secrets'], cmd
+        args = cmd[2:]
+        if args[:2] == ['versions', 'list']:
+            name = args[2]
+            if name not in self.versions:
+                return _done(1, stderr=b'ERROR: NOT_FOUND: Secret not found')
+            found = [{'name': 'projects/1/locations/europe-west4/secrets/{0}/versions/{1}'
+                              .format(name, v), 'state': state,
+                      'createTime': '2026-11-25T11:57:54.914113Z'}
+                     for v, state in reversed(self.versions[name])]
+            return _done(stdout=json.dumps(found[:1]).encode())
+        if args[:2] == ['versions', 'add']:
+            name = args[2]
+            if name not in self.versions:
+                return _done(1, stderr=b'ERROR: NOT_FOUND: Secret not found')
+            self.versions[name].append((len(self.versions[name]) + 1, 'ENABLED'))
+            self.added.setdefault(name, []).append(kwargs['input'])
+            return _done()
+        if args[0] == 'create':
+            self.versions[args[1]] = []
+            return _done()
+        if args[0] == 'list':
+            return _done(stdout='\n'.join(self.versions).encode())
+        raise AssertionError(cmd)
+
+    def gcloud_calls(self):
+        return [c for c, _ in self.calls if c[:2] == ['gcloud', 'secrets']]
+
+
+class TestSecretSettings:
+    def test_names_follow_the_chart(self, secret_service):
+        _, _, smset = sm.load_settings('staging')
+        assert smset.name_of('DJANGO_SECRET') == 'staging--my-service--DJANGO_SECRET'
+        assert (smset.project, smset.location) == ('rehive-services', 'europe-west4')
+        assert smset.labels() == {'env': 'staging', 'service': 'my-service',
+                                  'managed-by': 'rdeploy'}
+
+    def test_values_override_service_project_and_location(self):
+        smset = sm.SecretSettings('staging', {'project_name': 'release'}, {
+            'secretManager': {'environment': 'staging', 'service': 'other',
+                              'project': 'p', 'location': 'us-east1', 'keys': ['A']}})
+        assert smset.name_of('A') == 'staging--other--A'
+        assert (smset.project, smset.location) == ('p', 'us-east1')
+
+    def test_prefix_override(self):
+        smset = sm.SecretSettings('staging', {'project_name': 'release'}, {
+            'secretManager': {'prefix': 'custom-', 'keys': ['A']}})
+        assert smset.name_of('A') == 'custom-A'
+
+    def test_missing_environment_exits(self, secret_service):
+        path = secret_service / 'etc/helm/staging/values.yaml'
+        path.write_text(yaml.dump({'secretManager': {'keys': ['A']}}))
+        with pytest.raises(SystemExit, match='secretManager.environment'):
+            sm.load_settings('staging')
+
+    def test_missing_keys_exits(self, secret_service):
+        path = secret_service / 'etc/helm/staging/values.yaml'
+        path.write_text(yaml.dump({'secretManager': {'environment': 'staging'}}))
+        with pytest.raises(SystemExit, match='No secretManager.keys'):
+            sm.load_settings('staging')
+
+
+class TestGcloudEndpoint:
+    def test_mtls_endpoint_with_client_certificate_env(self, monkeypatch):
+        monkeypatch.delenv('CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER', raising=False)
+        monkeypatch.setenv('GOOGLE_API_USE_CLIENT_CERTIFICATE', 'true')
+        with patch('rdeploy.secret_manager.subprocess.run') as run:
+            env = sm.gcloud_env('europe-west4')
+        run.assert_not_called()
+        assert env['CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER'] == \
+            'https://secretmanager.europe-west4.rep.mtls.googleapis.com/'
+
+    def test_mtls_endpoint_with_gcloud_config(self, monkeypatch):
+        monkeypatch.delenv('CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER', raising=False)
+        monkeypatch.delenv('GOOGLE_API_USE_CLIENT_CERTIFICATE', raising=False)
+        with patch('rdeploy.secret_manager.subprocess.run',
+                   return_value=subprocess.CompletedProcess([], 0, 'True\n', '')):
+            env = sm.gcloud_env('europe-west4')
+        assert '.rep.mtls.' in env['CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER']
+
+    def test_regional_endpoint_without_client_certificate(self, monkeypatch):
+        monkeypatch.delenv('CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER', raising=False)
+        monkeypatch.delenv('GOOGLE_API_USE_CLIENT_CERTIFICATE', raising=False)
+        with patch('rdeploy.secret_manager.subprocess.run',
+                   return_value=subprocess.CompletedProcess([], 1, '', '')):
+            env = sm.gcloud_env('europe-west4')
+        assert env['CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER'] == \
+            'https://secretmanager.europe-west4.rep.googleapis.com/'
+
+    def test_existing_override_wins(self, monkeypatch):
+        monkeypatch.setenv('CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER', 'https://x/')
+        assert sm.gcloud_env('europe-west4')[
+            'CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER'] == 'https://x/'
+
+
+class TestSecretCheck:
+    def test_ok_when_every_key_enabled(self, mock_ctx, secret_service, capsys):
+        fake = FakeSecretManager({
+            'staging--my-service--DJANGO_SECRET': [(1, 'ENABLED')],
+            'staging--my-service--POSTGRES_PASSWORD': [(1, 'DISABLED'), (2, 'ENABLED')],
+        })
+        with patch('rdeploy.secret_manager.subprocess.run', fake):
+            sm.check(mock_ctx, 'staging')
+        out = capsys.readouterr().out
+        assert 'ok       staging--my-service--DJANGO_SECRET (version 1)' in out
+        assert 'ok       staging--my-service--POSTGRES_PASSWORD (version 2)' in out
+        # Every gcloud call names the regional secrets and the mTLS endpoint.
+        for cmd, kwargs in fake.calls:
+            if cmd[:2] == ['gcloud', 'secrets']:
+                assert '--project=rehive-services' in cmd
+                assert '--location=europe-west4' in cmd
+                assert kwargs['env']['CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER'] == \
+                    'https://secretmanager.europe-west4.rep.mtls.googleapis.com/'
+
+    def test_missing_secret_exits_nonzero(self, mock_ctx, secret_service, capsys):
+        fake = FakeSecretManager({'staging--my-service--DJANGO_SECRET': [(1, 'ENABLED')]})
+        with patch('rdeploy.secret_manager.subprocess.run', fake):
+            with pytest.raises(SystemExit):
+                sm.check(mock_ctx, 'staging')
+        assert 'MISSING  staging--my-service--POSTGRES_PASSWORD' in capsys.readouterr().out
+
+    def test_disabled_latest_version_fails(self, mock_ctx, secret_service, capsys):
+        fake = FakeSecretManager({
+            'staging--my-service--DJANGO_SECRET': [(1, 'ENABLED'), (2, 'DISABLED')],
+            'staging--my-service--POSTGRES_PASSWORD': [(1, 'ENABLED')],
+        })
+        with patch('rdeploy.secret_manager.subprocess.run', fake):
+            with pytest.raises(SystemExit):
+                sm.check(mock_ctx, 'staging')
+        assert 'DISABLED staging--my-service--DJANGO_SECRET (version 2)' in capsys.readouterr().out
+
+    def test_secret_with_no_versions_is_missing(self, mock_ctx, secret_service, capsys):
+        fake = FakeSecretManager({'staging--my-service--DJANGO_SECRET': [],
+                                  'staging--my-service--POSTGRES_PASSWORD': [(1, 'ENABLED')]})
+        with patch('rdeploy.secret_manager.subprocess.run', fake):
+            with pytest.raises(SystemExit):
+                sm.check(mock_ctx, 'staging')
+        assert 'MISSING  staging--my-service--DJANGO_SECRET' in capsys.readouterr().out
+
+    def test_permission_error_fails(self, mock_ctx, secret_service, capsys):
+        def run(cmd, **kwargs):
+            return _done(1, stderr=b'ERROR: PERMISSION_DENIED: denied')
+        with patch('rdeploy.secret_manager.subprocess.run', run):
+            with pytest.raises(SystemExit):
+                sm.check(mock_ctx, 'staging')
+        assert 'PERMISSION_DENIED' in capsys.readouterr().out
+
+
+class TestSecretList:
+    def test_lists_keys_and_extra_secrets_without_values(self, mock_ctx, secret_service, capsys):
+        fake = FakeSecretManager({
+            'staging--my-service--DJANGO_SECRET': [(1, 'ENABLED')],
+            'staging--my-service--OLD_KEY': [(3, 'ENABLED')],
+        })
+        with patch('rdeploy.secret_manager.subprocess.run', fake):
+            sm.list_secrets(mock_ctx, 'staging')
+        out = capsys.readouterr().out.splitlines()
+        assert out[0].split() == ['staging--my-service--DJANGO_SECRET', 'version', '1',
+                                  'ENABLED', '2026-11-25', '11:57', 'UTC']
+        assert 'not in secretManager.keys' in out[1]
+        assert out[2].split() == ['staging--my-service--POSTGRES_PASSWORD', 'missing']
+        assert not any('access' in c for c in fake.gcloud_calls())
+
+
+class TestSecretSet:
+    def test_value_from_stdin_goes_to_gcloud_stdin_only(self, mock_ctx, secret_service,
+                                                        monkeypatch, capsys):
+        fake = FakeSecretManager({'staging--my-service--DJANGO_SECRET': [(1, 'ENABLED')]})
+        monkeypatch.setattr('sys.stdin', io.StringIO('s3cr3t-value\n'))
+        with patch('rdeploy.secret_manager.subprocess.run', fake):
+            sm.set_secret(mock_ctx, 'staging', 'DJANGO_SECRET')
+        assert fake.added == {'staging--my-service--DJANGO_SECRET': [b's3cr3t-value']}
+        assert not any('s3cr3t' in ' '.join(c) for c in fake.gcloud_calls())
+        out = capsys.readouterr()
+        assert 's3cr3t' not in out.out + out.err
+        assert 'set     staging--my-service--DJANGO_SECRET' in out.out
+        assert '--data-file=-' in fake.gcloud_calls()[0]
+
+    def test_creates_missing_secret_with_labels(self, mock_ctx, secret_service,
+                                                monkeypatch, capsys):
+        fake = FakeSecretManager()
+        monkeypatch.setattr('sys.stdin', io.StringIO('value'))
+        with patch('rdeploy.secret_manager.subprocess.run', fake):
+            sm.set_secret(mock_ctx, 'staging', 'POSTGRES_PASSWORD')
+        create = [c for c in fake.gcloud_calls() if c[2] == 'create'][0]
+        assert create[3] == 'staging--my-service--POSTGRES_PASSWORD'
+        assert '--labels=env=staging,service=my-service,managed-by=rdeploy' in create
+        assert fake.added == {'staging--my-service--POSTGRES_PASSWORD': [b'value']}
+        assert 'created staging--my-service--POSTGRES_PASSWORD' in capsys.readouterr().out
+
+    def test_hidden_prompt_on_a_terminal(self, mock_ctx, secret_service, monkeypatch):
+        fake = FakeSecretManager({'staging--my-service--DJANGO_SECRET': []})
+        stdin = MagicMock()
+        stdin.isatty.return_value = True
+        monkeypatch.setattr('sys.stdin', stdin)
+        with patch('rdeploy.secret_manager.getpass.getpass', side_effect=['abc', 'abc']):
+            with patch('rdeploy.secret_manager.subprocess.run', fake):
+                sm.set_secret(mock_ctx, 'staging', 'DJANGO_SECRET')
+        assert fake.added == {'staging--my-service--DJANGO_SECRET': [b'abc']}
+
+    def test_mismatched_prompt_exits(self, mock_ctx, secret_service, monkeypatch):
+        stdin = MagicMock()
+        stdin.isatty.return_value = True
+        monkeypatch.setattr('sys.stdin', stdin)
+        with patch('rdeploy.secret_manager.getpass.getpass', side_effect=['abc', 'abd']):
+            with patch('rdeploy.secret_manager.subprocess.run') as run:
+                with pytest.raises(SystemExit, match="don't match"):
+                    sm.set_secret(mock_ctx, 'staging', 'DJANGO_SECRET')
+        assert not any(c.args[0][:2] == ['gcloud', 'secrets'] for c in run.call_args_list)
+
+    def test_empty_stdin_exits(self, mock_ctx, secret_service, monkeypatch):
+        monkeypatch.setattr('sys.stdin', io.StringIO('\n'))
+        with patch('rdeploy.secret_manager.subprocess.run', FakeSecretManager()):
+            with pytest.raises(SystemExit, match='Empty value'):
+                sm.set_secret(mock_ctx, 'staging', 'DJANGO_SECRET')
+
+    def test_generate(self, mock_ctx, secret_service, capsys):
+        fake = FakeSecretManager({'staging--my-service--DJANGO_SECRET': []})
+        with patch('rdeploy.secret_manager.subprocess.run', fake):
+            sm.set_secret(mock_ctx, 'staging', 'DJANGO_SECRET', generate=True)
+        value = fake.added['staging--my-service--DJANGO_SECRET'][0]
+        assert len(value) == 64
+        assert value.decode() not in capsys.readouterr().out
+
+    def test_invalid_key_exits(self, mock_ctx, secret_service):
+        with pytest.raises(SystemExit, match='not a valid'):
+            sm.set_secret(mock_ctx, 'staging', 'BAD-KEY')
+
+    def test_key_not_in_values_warns(self, mock_ctx, secret_service, monkeypatch, capsys):
+        monkeypatch.setattr('sys.stdin', io.StringIO('v'))
+        with patch('rdeploy.secret_manager.subprocess.run', FakeSecretManager()):
+            sm.set_secret(mock_ctx, 'staging', 'OTHER')
+        assert "OTHER isn't in secretManager.keys" in capsys.readouterr().err
+
+
+class TestSecretRestart:
+    def test_restarts_the_release_deployments(self, mock_ctx, secret_service):
+        mock_ctx.run.side_effect = [
+            MagicMock(failed=False, stdout='deployment.apps/my-service\ndeployment.apps/worker\n'),
+            MagicMock(failed=False), MagicMock(failed=False), MagicMock(failed=False)]
+        sm.restart(mock_ctx, 'staging')
+        cmds = [c.args[0] for c in mock_ctx.run.call_args_list]
+        target = ('--context gke_rehive-services_europe-west4_staging3'
+                  ' --namespace my-service-staging')
+        assert cmds[0] == ('kubectl {0} get deployments'
+                           ' -l app.kubernetes.io/instance=my-service -o name'.format(target))
+        assert cmds[1] == ('kubectl {0} rollout restart'
+                           ' deployment.apps/my-service deployment.apps/worker'.format(target))
+        assert cmds[2].endswith('rollout status deployment.apps/my-service --timeout=5m')
+        assert cmds[3].endswith('rollout status deployment.apps/worker --timeout=5m')
+
+    def test_kubectl_failure_exits(self, mock_ctx, secret_service):
+        mock_ctx.run.return_value = MagicMock(failed=True, stdout='')
+        with pytest.raises(SystemExit, match='kubectl-login'):
+            sm.restart(mock_ctx, 'staging')
+
+
+class TestSecretMigrate:
+    def _k8s(self, secrets, list_fails=False):
+        """subprocess.run for kubectl answering from {secret: {field: value}},
+        falling through to a FakeSecretManager for gcloud."""
+        fake = FakeSecretManager({'staging--my-service--DJANGO_SECRET': [(1, 'ENABLED')],
+                                  'staging--my-service--POSTGRES_PASSWORD': []})
+
+        def run(cmd, **kwargs):
+            if cmd[0] != 'kubectl':
+                return fake(cmd, **kwargs)
+            fake.calls.append((cmd, kwargs))
+            assert cmd[1:5] == ['--context', 'gke_rehive-services_europe-west4_staging3',
+                                '--namespace', 'my-service-staging']
+            args = cmd[5:]
+            if args == ['get', 'secrets', '-o', 'name']:
+                if list_fails:
+                    return subprocess.CompletedProcess(cmd, 1, '', 'error: Unauthorized')
+                return subprocess.CompletedProcess(
+                    cmd, 0, ''.join('secret/{0}\n'.format(s) for s in secrets), '')
+            if args[:2] == ['get', 'secret']:
+                data = {k: base64.b64encode(v.encode()).decode()
+                        for k, v in secrets[args[2]].items()}
+                return subprocess.CompletedProcess(
+                    cmd, 0, json.dumps({'data': data}), '')
+            raise AssertionError(cmd)
+        return fake, run
+
+    def test_copies_values_through_stdin(self, mock_ctx, secret_service, capsys):
+        fake, run = self._k8s({'my-service': {'DJANGO_SECRET': 'django-value'},
+                               'postgres': {'postgres-password': 'pg-value'}})
+        with patch('rdeploy.secret_manager.subprocess.run', run):
+            sm.migrate(mock_ctx, 'staging',
+                       map=['POSTGRES_PASSWORD=postgres/postgres-password'])
+        assert fake.added == {
+            'staging--my-service--DJANGO_SECRET': [b'django-value'],
+            'staging--my-service--POSTGRES_PASSWORD': [b'pg-value'],
+        }
+        out = capsys.readouterr().out
+        assert 'value' not in out.replace('values', '')
+        assert 'copy    my-service/DJANGO_SECRET -> staging--my-service--DJANGO_SECRET' in out
+        assert 'ok       staging--my-service--POSTGRES_PASSWORD (version 1)' in out
+        for cmd, _ in fake.calls:
+            assert 'django-value' not in ' '.join(cmd)
+            assert 'pg-value' not in ' '.join(cmd)
+
+    def test_dry_run_adds_nothing(self, mock_ctx, secret_service, capsys):
+        fake, run = self._k8s({'my-service': {'DJANGO_SECRET': 'x', 'POSTGRES_PASSWORD': 'y'}})
+        with patch('rdeploy.secret_manager.subprocess.run', run):
+            sm.migrate(mock_ctx, 'staging', dry_run=True)
+        assert fake.added == {}
+        assert not fake.gcloud_calls()
+        assert capsys.readouterr().out.count('copy    ') == 2
+
+    def test_skips_missing_secret_and_field(self, mock_ctx, secret_service, capsys):
+        fake, run = self._k8s({'my-service': {'DJANGO_SECRET': 'x'}})
+        with patch('rdeploy.secret_manager.subprocess.run', run):
+            with pytest.raises(SystemExit):  # check fails: POSTGRES_PASSWORD has no version
+                sm.migrate(mock_ctx, 'staging',
+                           map=['POSTGRES_PASSWORD=postgres/postgres-password'])
+        out = capsys.readouterr().out
+        assert 'skip    POSTGRES_PASSWORD (no Secret postgres in my-service-staging)' in out
+        assert fake.added == {'staging--my-service--DJANGO_SECRET': [b'x']}
+
+    def test_fails_early_when_kubectl_cannot_read(self, mock_ctx, secret_service):
+        fake, run = self._k8s({}, list_fails=True)
+        with patch('rdeploy.secret_manager.subprocess.run', run):
+            with pytest.raises(SystemExit, match='rdeploy kubectl-login'):
+                sm.migrate(mock_ctx, 'staging')
+        assert not fake.gcloud_calls()
+
+    def test_bad_map_exits(self, mock_ctx, secret_service):
+        with pytest.raises(SystemExit, match='KEY=secret/field'):
+            sm.migrate(mock_ctx, 'staging', map=['POSTGRES_PASSWORD=postgres'])
+
+
+class TestUpgradeSecretCheck:
+    def test_upgrade_checks_secrets_before_helm(self, mock_ctx, secret_service):
+        settings = yaml.safe_load(open('rdeploy.yaml'))
+        fake = FakeSecretManager({'staging--my-service--DJANGO_SECRET': [(1, 'ENABLED')]})
+        with patch('rdeploy.tasks.get_settings', return_value=settings):
+            with patch('rdeploy.tasks.set_context'):
+                with patch('rdeploy.secret_manager.subprocess.run', fake):
+                    with pytest.raises(SystemExit, match='rdeploy secret set staging'):
+                        upgrade(mock_ctx, 'staging', tag='1.2.3')
+        mock_ctx.run.assert_not_called()
+
+    def test_upgrade_runs_helm_when_secrets_ok(self, mock_ctx, secret_service):
+        settings = yaml.safe_load(open('rdeploy.yaml'))
+        settings['configs']['staging'].update(helm_chart='rehive/service',
+                                              helm_chart_version='1.4.0')
+        mock_ctx.run.return_value = MagicMock(failed=False)
+        fake = FakeSecretManager({'staging--my-service--DJANGO_SECRET': [(1, 'ENABLED')],
+                                  'staging--my-service--POSTGRES_PASSWORD': [(1, 'ENABLED')]})
+        with patch('rdeploy.tasks.get_settings', return_value=settings):
+            with patch('rdeploy.tasks.set_context'):
+                with patch('rdeploy.secret_manager.subprocess.run', fake):
+                    with patch('rdeploy.tasks._watch_rollout'):
+                        upgrade(mock_ctx, 'staging', tag='1.2.3')
+        assert 'helm upgrade my-service' in mock_ctx.run.call_args[0][0]
+
+    def test_no_secret_check_skips_it(self, mock_ctx, secret_service):
+        settings = yaml.safe_load(open('rdeploy.yaml'))
+        settings['configs']['staging'].update(helm_chart='rehive/service',
+                                              helm_chart_version='1.4.0')
+        mock_ctx.run.return_value = MagicMock(failed=False)
+        with patch('rdeploy.tasks.get_settings', return_value=settings):
+            with patch('rdeploy.tasks.set_context'):
+                with patch('rdeploy.secret_manager.subprocess.run') as run:
+                    with patch('rdeploy.tasks._watch_rollout'):
+                        upgrade(mock_ctx, 'staging', tag='1.2.3', secret_check=False)
+        run.assert_not_called()
+
+    def test_not_checked_when_secret_manager_off(self, mock_ctx, secret_service):
+        (secret_service / 'etc/helm/staging/values.yaml').write_text(
+            yaml.dump({'secretManager': {'enabled': False, 'keys': ['A']}}))
+        settings = yaml.safe_load(open('rdeploy.yaml'))
+        settings['configs']['staging'].update(helm_chart='rehive/service',
+                                              helm_chart_version='1.4.0')
+        mock_ctx.run.return_value = MagicMock(failed=False)
+        with patch('rdeploy.tasks.get_settings', return_value=settings):
+            with patch('rdeploy.tasks.set_context'):
+                with patch('rdeploy.secret_manager.subprocess.run') as run:
+                    with patch('rdeploy.tasks._watch_rollout'):
+                        upgrade(mock_ctx, 'staging', tag='1.2.3')
+        run.assert_not_called()
+
+
+class TestSecretCommandLine:
+    @pytest.mark.parametrize('argv, expected', [
+        (['rdeploy', 'secret', 'set', 'staging', 'KEY'],
+         ['rdeploy', 'secret.set', 'staging', 'KEY']),
+        (['rdeploy', 'secret', 'list', 'production'],
+         ['rdeploy', 'secret.list', 'production']),
+        (['rdeploy', 'secret.check', 'staging'], ['rdeploy', 'secret.check', 'staging']),
+        (['rdeploy', 'decode-secret', 'staging', 'secret'],
+         ['rdeploy', 'decode-secret', 'staging', 'secret']),
+        (['rdeploy', 'upgrade', 'staging', '1.0'], ['rdeploy', 'upgrade', 'staging', '1.0']),
+    ])
+    def test_secret_argv(self, argv, expected):
+        assert secret_argv(argv) == expected
+
+    def test_secret_tasks_are_registered(self):
+        from rdeploy.main import program
+        names = program.namespace.task_names
+        for action in sm.ACTIONS:
+            assert 'secret.' + action in names
+
+    def test_deprecated_kubernetes_secret_tasks(self):
+        from rdeploy.tasks import decode_secret
+        assert upload_secrets.__doc__.strip().startswith('Deprecated')
+        assert decode_secret.__doc__.strip().startswith('Deprecated')

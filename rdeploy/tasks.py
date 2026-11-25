@@ -19,6 +19,7 @@ from packaging import version
 from rdeploy.exceptions import ReleaseError, ExecuteError
 from rdeploy import gke_auth
 from rdeploy.helm_chart import fetch_chart, ChartFetchError
+from rdeploy.secret_manager import check_before_release
 
 from rdeploy.utils import (get_settings, confirm, get_helm_bin, get_helm_os_string,
                            yaml_decode_data_fields, build_management_cmd,
@@ -266,7 +267,10 @@ def create_namespace(ctx, config):
 @task
 def upload_secrets(ctx, config, env_file):
     """
-    Uploads secrets from an env file to kubernetes
+    Deprecated: upload an env file to a Kubernetes Secret
+
+    Services on the rehive-service chart 1.4.0+ keep secrets in Google
+    Secret Manager instead: see `rdeploy secret`.
     """
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
@@ -289,7 +293,10 @@ def upload_secrets(ctx, config, env_file):
 @task
 def decode_secret(ctx, config, secret):
     """
-    Prints the decoded values of a kubernetes secret
+    Deprecated: print the decoded values of a Kubernetes Secret
+
+    Services on the rehive-service chart 1.4.0+ keep secrets in Google
+    Secret Manager instead: see `rdeploy secret`.
     """
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
@@ -603,8 +610,13 @@ def _watch_rollout(stop_event, poll_interval=2, display=None, kube_args=()):
         _note('progress display unavailable: {err}'.format(err=err))
 
 
-@task
-def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
+@task(help={
+    'secret-check': 'When the values turn secretManager on, check every key'
+                     ' has an enabled version before running helm'
+                     ' (default; --no-secret-check skips it)',
+})
+def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True,
+            secret_check=True):
     """
     Upgrades kubernetes deployment
 
@@ -621,10 +633,18 @@ def upgrade(ctx, config, tag, atomic=True, timeout='15m', progress=True):
     scrolls above it; on a non-TTY it prints the table once, then any row
     that changes. This is purely informational and never affects the
     result; use --no-progress to disable it.
+
+    When the values file turns secretManager on, the upgrade first checks
+    that every key in secretManager.keys has an enabled version in Secret
+    Manager (as `rdeploy secret check` does) and stops before helm if one
+    doesn't: otherwise new pods would wait in ContainerCreating until the
+    atomic upgrade times out. --no-secret-check skips the check.
     """
 
     settings_dict = get_settings()
     config_dict = settings_dict['configs'][config]
+    if secret_check:
+        check_before_release(config, config_dict)
     set_context(ctx, config)
 
     helm_bin = get_helm_bin(config_dict)

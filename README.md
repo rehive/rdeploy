@@ -37,7 +37,7 @@ rdeploy git-release patch
 | `kubectl-login` | Sign kubectl in to GKE under certificate-based access (see [kubectl under certificate-based access](#kubectl-under-certificate-based-access)) |
 | `activate` | Fetch and set project, cluster, and namespace |
 | `install` | Install a Helm chart deployment |
-| `upgrade` | Upgrade a Helm deployment to a new image tag (atomic by default: waits for the rollout and rolls back on failure; use `--no-atomic` to skip, `--timeout` to adjust the wait, default `15m`) |
+| `upgrade` | Upgrade a Helm deployment to a new image tag (atomic by default: waits for the rollout and rolls back on failure; use `--no-atomic` to skip, `--timeout` to adjust the wait, default `15m`). With `secretManager.enabled`, checks the secrets first (`--no-secret-check` skips it) |
 | `helm` | Run arbitrary Helm commands |
 | `helm-setup` | Download and configure a local Helm binary |
 | `git-release` | Bump version and push a git tag |
@@ -49,8 +49,13 @@ rdeploy git-release patch
 | `shell` | Exec into a management container |
 | `manage` | Run a Django management command in-cluster |
 | `create-namespace` | Create a Kubernetes namespace |
-| `upload-secrets` | Upload secrets from an env file to Kubernetes |
-| `decode-secret` | Print decoded values of a Kubernetes secret |
+| `secret list` | List a service's Secret Manager secrets and their newest version, never values (see [Secrets in Secret Manager](#secrets-in-secret-manager)) |
+| `secret set` | Add a new version of a secret, from a hidden prompt or stdin |
+| `secret check` | Check every key in `secretManager.keys` has an enabled version |
+| `secret restart` | Restart the release's deployments so pods read new values |
+| `secret migrate` | Copy values from the namespace's Kubernetes Secrets into Secret Manager |
+| `upload-secrets` | Deprecated: upload secrets from an env file to a Kubernetes Secret |
+| `decode-secret` | Deprecated: print decoded values of a Kubernetes Secret |
 | `upload-static` | Upload static files to a GCS bucket |
 | `create-bucket` | Create a private GCS bucket |
 | `create-public-bucket` | Create a public GCS bucket |
@@ -161,6 +166,86 @@ unless you tell developers otherwise. Keep the session length short in the
 app's session control, keep the control plane on a private endpoint behind
 your access gateway, and leave CBA enforced for everything else.
 rdeploy doesn't contain any organisation's client ID, project or cluster names.
+
+## Secrets in Secret Manager
+
+The `rehive-service` chart (1.4.0+) loads a service's secrets from Google
+Secret Manager instead of a Kubernetes Secret. Each key under
+`secretManager.keys` in the values file is one regional secret named
+`<environment>--<service>--<KEY>`, which the pods read at startup through
+Workload Identity:
+
+```yaml
+# etc/helm/staging/values.yaml
+secretManager:
+  enabled: true
+  environment: staging
+  keys: [DJANGO_SECRET, POSTGRES_PASSWORD]
+```
+
+`rdeploy secret` manages those secrets. Each command takes the rdeploy config
+and reads everything else from the config's `helm_values_path`, the way the
+chart does: `secretManager.environment`, `service` (default: `project_name`),
+`prefix`, `project` (default: `rehive-services`) and `location` (default:
+`europe-west4`).
+
+```bash
+rdeploy secret list staging              # names and newest version, never values
+rdeploy secret set staging DJANGO_SECRET # value from a hidden prompt
+rdeploy secret set staging DJANGO_SECRET --generate   # new random value
+<command that prints the value> | rdeploy secret set staging SENTRY_DSN_KEY
+rdeploy secret check staging             # every key has an enabled version
+rdeploy secret restart staging           # pods read the new values
+```
+
+`rdeploy secret <action>` is short for invoke's `rdeploy secret.<action>`;
+`rdeploy --help secret.set` shows each command's options.
+
+`set` creates the secret if it's missing (labelled `env`, `service` and
+`managed-by=rdeploy`) and adds a version. Values never go on the command line,
+to the terminal or to disk: rdeploy passes them to gcloud on stdin. Pods read
+values once, at startup, so run `restart` after `set`. `restart` restarts the
+deployments labelled `app.kubernetes.io/instance=<project_name>` and waits
+for each rollout.
+
+`upgrade` runs the same check as `secret check` when the values file has
+`secretManager.enabled: true`, and stops before helm if a key has no enabled
+version. Otherwise new pods would wait in `ContainerCreating` until the atomic
+upgrade times out. `--no-secret-check` skips it, for example if you can add
+versions but not list them.
+
+### Moving from Kubernetes Secrets
+
+`rdeploy secret migrate` copies each key's value from the namespace's
+Kubernetes Secrets into Secret Manager, then runs `secret check`. By default a
+key comes from the field of the same name in the Secret named after the
+release (`project_name`); `--map` points a key elsewhere:
+
+```bash
+rdeploy kubectl-login
+rdeploy secret migrate staging --dry-run \
+    --map POSTGRES_PASSWORD=postgres/postgres-password \
+    --map RABBITMQ_PASSWORD=rabbitmq/rabbitmq-password
+```
+
+Drop `--dry-run` to copy. Values go from kubectl to gcloud in memory and are
+never printed. Keys whose Secret or field doesn't exist are skipped. It stops
+straight away if kubectl can't read the namespace, for example once the
+`rdeploy kubectl-login` session has expired. It's safe to rerun: each run adds
+a new version with the same value.
+
+### Certificate-based access
+
+Regional secrets are served from a regional endpoint, and under
+certificate-based access from its mTLS form. rdeploy sets
+`CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER` to
+`https://secretmanager.<location>.rep.mtls.googleapis.com/` when
+`GOOGLE_API_USE_CLIENT_CERTIFICATE=true` or gcloud's
+`context_aware/use_client_certificate` is on, and to
+`https://secretmanager.<location>.rep.googleapis.com/` otherwise. Without
+this, gcloud fails with `ACCESS_TOKEN_TYPE_UNSUPPORTED` or "Project ID ...
+does not match the expected format". An override already in your environment
+wins.
 
 ## Configuration
 
