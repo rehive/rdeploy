@@ -1,3 +1,4 @@
+import os
 import sys
 import tarfile
 import zipfile
@@ -321,7 +322,27 @@ def upload_static(ctx, config, bucket_name):
     ctx.run('gcloud storage rsync --recursive'
             ' --delete-unmatched-destination-objects'
             ' var/www/static gs://{bucket_name}'
-            .format(bucket_name=bucket_name), echo=False)
+            .format(bucket_name=bucket_name), echo=False,
+            env=_storage_upload_env())
+
+
+def _storage_upload_env():
+    """Run gcloud storage transfers in one process with many threads.
+
+    With certificate-based access and an on-disk client certificate, every
+    gcloud process rewrites (and on exit deletes) the same
+    ~/.config/gcloud/caa_cert.pem, each with its own key passphrase.
+    Parallel worker processes clobber each other's file and uploads fail
+    with "[SSL] PEM lib". Threads share one process and certificate, so
+    keep a single process and parallelise with threads instead. Values
+    already set in the environment win.
+    """
+    return {
+        'CLOUDSDK_STORAGE_PROCESS_COUNT':
+            os.environ.get('CLOUDSDK_STORAGE_PROCESS_COUNT', '1'),
+        'CLOUDSDK_STORAGE_THREAD_COUNT':
+            os.environ.get('CLOUDSDK_STORAGE_THREAD_COUNT', '16'),
+    }
 
 
 @task
