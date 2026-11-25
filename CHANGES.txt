@@ -1,3 +1,14 @@
+Version 0.5.7, unreleased
+===============================
+- `rdeploy upload-static` now runs `gcloud storage rsync` in one process
+  with 16 threads. With certificate-based access and an on-disk client
+  certificate (the usual Linux setup), gcloud's parallel worker processes
+  overwrite each other's `~/.config/gcloud/caa_cert.pem`, so some files
+  failed with "ERROR: [SSL] PEM lib" and were never uploaded. Set
+  `CLOUDSDK_STORAGE_PROCESS_COUNT` or `CLOUDSDK_STORAGE_THREAD_COUNT` to
+  override.
+
+----
 Version 0.5.6, unreleased
 ===============================
 - `rdeploy upload-static`, `rdeploy create-bucket` and

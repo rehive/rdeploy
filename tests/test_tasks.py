@@ -837,3 +837,34 @@ class TestInteractiveCommands:
             self._run(
                 shell, sample_settings_v3, mock_ctx, 'staging', returncode=3)
         assert exc.value.code == 3
+
+
+class TestUploadStatic:
+    def _rsync_call(self, mock_ctx):
+        from rdeploy.tasks import upload_static
+        with patch('rdeploy.tasks.set_project'):
+            upload_static(mock_ctx, 'production', 'my-static-bucket')
+        rsync = [c for c in mock_ctx.run.call_args_list
+                 if 'gcloud storage rsync' in c.args[0]]
+        assert len(rsync) == 1
+        return rsync[0]
+
+    def test_rsync_uses_one_process_many_threads(self, mock_ctx, monkeypatch):
+        monkeypatch.delenv('CLOUDSDK_STORAGE_PROCESS_COUNT', raising=False)
+        monkeypatch.delenv('CLOUDSDK_STORAGE_THREAD_COUNT', raising=False)
+        call = self._rsync_call(mock_ctx)
+        assert '--delete-unmatched-destination-objects' in call.args[0]
+        assert 'gs://my-static-bucket' in call.args[0]
+        assert call.kwargs['env'] == {
+            'CLOUDSDK_STORAGE_PROCESS_COUNT': '1',
+            'CLOUDSDK_STORAGE_THREAD_COUNT': '16',
+        }
+
+    def test_rsync_keeps_env_overrides(self, mock_ctx, monkeypatch):
+        monkeypatch.setenv('CLOUDSDK_STORAGE_PROCESS_COUNT', '4')
+        monkeypatch.setenv('CLOUDSDK_STORAGE_THREAD_COUNT', '8')
+        call = self._rsync_call(mock_ctx)
+        assert call.kwargs['env'] == {
+            'CLOUDSDK_STORAGE_PROCESS_COUNT': '4',
+            'CLOUDSDK_STORAGE_THREAD_COUNT': '8',
+        }
