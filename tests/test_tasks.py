@@ -899,10 +899,10 @@ def secret_service(tmp_path, monkeypatch):
             "staging": {
                 "namespace": "my-service-staging",
                 "project_name": "my-service",
-                "kube_context": "gke_rehive-services_europe-west4_staging3",
+                "kube_context": "gke_my-project_us-central1_cluster-1",
                 "helm_values_path": "./etc/helm/staging/values.yaml",
-                "cloud_provider": {"name": "gcp", "project": "rehive-services",
-                                   "region": "europe-west4"},
+                "cloud_provider": {"name": "gcp", "project": "my-project",
+                                   "region": "us-central1"},
             }
         },
     }
@@ -937,7 +937,7 @@ class FakeSecretManager:
             name = args[2]
             if name not in self.versions:
                 return _done(1, stderr=b'ERROR: NOT_FOUND: Secret not found')
-            found = [{'name': 'projects/1/locations/europe-west4/secrets/{0}/versions/{1}'
+            found = [{'name': 'projects/1/locations/us-central1/secrets/{0}/versions/{1}'
                               .format(name, v), 'state': state,
                       'createTime': '2026-11-25T11:57:54.914113Z'}
                      for v, state in reversed(self.versions[name])]
@@ -964,9 +964,18 @@ class TestSecretSettings:
     def test_names_follow_the_chart(self, secret_service):
         _, _, smset = sm.load_settings('staging')
         assert smset.name_of('DJANGO_SECRET') == 'staging--my-service--DJANGO_SECRET'
-        assert (smset.project, smset.location) == ('rehive-services', 'europe-west4')
+        assert (smset.project, smset.location) == ('my-project', 'us-central1')
         assert smset.labels() == {'env': 'staging', 'service': 'my-service',
                                   'managed-by': 'rdeploy'}
+
+    def test_missing_location_exits(self, secret_service):
+        settings = yaml.safe_load(open('rdeploy.yaml'))
+        provider = settings['configs']['staging']['cloud_provider']
+        del provider['region']
+        provider['zone'] = 'us-central1-a'
+        (secret_service / 'rdeploy.yaml').write_text(yaml.dump(settings))
+        with pytest.raises(SystemExit, match='secretManager.location'):
+            sm.load_settings('staging')
 
     def test_values_override_service_project_and_location(self):
         smset = sm.SecretSettings('staging', {'project_name': 'release'}, {
@@ -998,17 +1007,17 @@ class TestGcloudEndpoint:
         monkeypatch.delenv('CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER', raising=False)
         monkeypatch.setenv('GOOGLE_API_USE_CLIENT_CERTIFICATE', 'true')
         with patch('rdeploy.secret_manager.subprocess.run') as run:
-            env = sm.gcloud_env('europe-west4')
+            env = sm.gcloud_env('us-central1')
         run.assert_not_called()
         assert env['CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER'] == \
-            'https://secretmanager.europe-west4.rep.mtls.googleapis.com/'
+            'https://secretmanager.us-central1.rep.mtls.googleapis.com/'
 
     def test_mtls_endpoint_with_gcloud_config(self, monkeypatch):
         monkeypatch.delenv('CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER', raising=False)
         monkeypatch.delenv('GOOGLE_API_USE_CLIENT_CERTIFICATE', raising=False)
         with patch('rdeploy.secret_manager.subprocess.run',
                    return_value=subprocess.CompletedProcess([], 0, 'True\n', '')):
-            env = sm.gcloud_env('europe-west4')
+            env = sm.gcloud_env('us-central1')
         assert '.rep.mtls.' in env['CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER']
 
     def test_regional_endpoint_without_client_certificate(self, monkeypatch):
@@ -1016,13 +1025,13 @@ class TestGcloudEndpoint:
         monkeypatch.delenv('GOOGLE_API_USE_CLIENT_CERTIFICATE', raising=False)
         with patch('rdeploy.secret_manager.subprocess.run',
                    return_value=subprocess.CompletedProcess([], 1, '', '')):
-            env = sm.gcloud_env('europe-west4')
+            env = sm.gcloud_env('us-central1')
         assert env['CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER'] == \
-            'https://secretmanager.europe-west4.rep.googleapis.com/'
+            'https://secretmanager.us-central1.rep.googleapis.com/'
 
     def test_existing_override_wins(self, monkeypatch):
         monkeypatch.setenv('CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER', 'https://x/')
-        assert sm.gcloud_env('europe-west4')[
+        assert sm.gcloud_env('us-central1')[
             'CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER'] == 'https://x/'
 
 
@@ -1040,10 +1049,10 @@ class TestSecretCheck:
         # Every gcloud call names the regional secrets and the mTLS endpoint.
         for cmd, kwargs in fake.calls:
             if cmd[:2] == ['gcloud', 'secrets']:
-                assert '--project=rehive-services' in cmd
-                assert '--location=europe-west4' in cmd
+                assert '--project=my-project' in cmd
+                assert '--location=us-central1' in cmd
                 assert kwargs['env']['CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER'] == \
-                    'https://secretmanager.europe-west4.rep.mtls.googleapis.com/'
+                    'https://secretmanager.us-central1.rep.mtls.googleapis.com/'
 
     def test_missing_secret_exits_nonzero(self, mock_ctx, secret_service, capsys):
         fake = FakeSecretManager({'staging--my-service--DJANGO_SECRET': [(1, 'ENABLED')]})
@@ -1173,7 +1182,7 @@ class TestSecretRestart:
             MagicMock(failed=False), MagicMock(failed=False), MagicMock(failed=False)]
         sm.restart(mock_ctx, 'staging')
         cmds = [c.args[0] for c in mock_ctx.run.call_args_list]
-        target = ('--context gke_rehive-services_europe-west4_staging3'
+        target = ('--context gke_my-project_us-central1_cluster-1'
                   ' --namespace my-service-staging')
         assert cmds[0] == ('kubectl {0} get deployments'
                            ' -l app.kubernetes.io/instance=my-service -o name'.format(target))
@@ -1199,7 +1208,7 @@ class TestSecretMigrate:
             if cmd[0] != 'kubectl':
                 return fake(cmd, **kwargs)
             fake.calls.append((cmd, kwargs))
-            assert cmd[1:5] == ['--context', 'gke_rehive-services_europe-west4_staging3',
+            assert cmd[1:5] == ['--context', 'gke_my-project_us-central1_cluster-1',
                                 '--namespace', 'my-service-staging']
             args = cmd[5:]
             if args == ['get', 'secrets', '-o', 'name']:

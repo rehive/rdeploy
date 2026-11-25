@@ -185,9 +185,12 @@ secretManager:
 
 `rdeploy secret` manages those secrets. Each command takes the rdeploy config
 and reads everything else from the config's `helm_values_path`, the way the
-chart does: `secretManager.environment`, `service` (default: `project_name`),
-`prefix`, `project` (default: `rehive-services`) and `location` (default:
-`europe-west4`).
+chart does: `secretManager.environment`, `service` (default: `project_name`)
+and `prefix`. The secrets' `project` and `location` come from
+`secretManager.project` and `secretManager.location`, or else from
+`cloud_provider.project` and `cloud_provider.region` in `rdeploy.yaml`. A
+`zone` isn't used. The chart has its own defaults for these two, so if they
+differ from your `cloud_provider`, set them in the values file.
 
 ```bash
 rdeploy secret list staging              # names and newest version, never values

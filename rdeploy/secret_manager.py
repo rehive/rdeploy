@@ -24,10 +24,6 @@ from invoke import task
 
 from rdeploy.utils import get_settings, kubectl_target_flags
 
-# Defaults of the rehive-service chart's secretManager values.
-CHART_DEFAULT_PROJECT = 'rehive-services'
-CHART_DEFAULT_LOCATION = 'europe-west4'
-
 KEY_PATTERN = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
 ACTIONS = ('list', 'set', 'check', 'restart', 'migrate')
@@ -48,8 +44,12 @@ class SecretSettings:
         self.config_dict = config_dict
         self.enabled = bool(sm.get('enabled'))
         self.keys = list(sm.get('keys') or [])
-        self.project = sm.get('project') or CHART_DEFAULT_PROJECT
-        self.location = sm.get('location') or CHART_DEFAULT_LOCATION
+        # The chart has its own defaults for these; rdeploy falls back to
+        # the config's cloud_provider instead, so set them in the values
+        # file when the two differ. A zone isn't a secret location.
+        provider = config_dict.get('cloud_provider') or {}
+        self.project = sm.get('project') or provider.get('project')
+        self.location = sm.get('location') or provider.get('region')
         # The chart's fullname: the release name, which is project_name.
         self.service = (sm.get('service')
                         or str(config_dict['project_name'])[:63].rstrip('-'))
@@ -97,6 +97,12 @@ def load_settings(config):
     if smset.prefix is None:
         sys.exit('Set secretManager.environment (e.g. {config}) in {path}.'
                  .format(config=config, path=path))
+    if not smset.project:
+        sys.exit('Set secretManager.project in {path} (or cloud_provider.project'
+                 ' in rdeploy.yaml).'.format(path=path))
+    if not smset.location:
+        sys.exit('Set secretManager.location in {path} (or cloud_provider.region'
+                 ' in rdeploy.yaml).'.format(path=path))
     for key in smset.keys:
         if not KEY_PATTERN.match(str(key)):
             sys.exit("secretManager.keys: '{key}' is not a valid environment"
