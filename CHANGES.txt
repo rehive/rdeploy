@@ -1,3 +1,13 @@
+Version 0.5.6, unreleased
+===============================
+- `rdeploy upload-static`, `rdeploy create-bucket` and
+  `rdeploy create-public-bucket` now use `gcloud storage` instead of
+  `gsutil`. Under certificate-based access, `gsutil` doesn't send the device
+  certificate and Google rejected it with "access_denied: Account
+  restricted". `upload-static` still deletes files in the bucket that are no
+  longer in `var/www/static`, as `gsutil rsync -d` did.
+
+----
 Version 0.5.5, unreleased
 ===============================
 - `rdeploy install` and `rdeploy upgrade` no longer need the
