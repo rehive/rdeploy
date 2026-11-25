@@ -318,7 +318,9 @@ def upload_static(ctx, config, bucket_name):
     set_project(ctx, config)
 
     ctx.run('echo "yes\n" | python src/manage.py collectstatic')
-    ctx.run('gsutil -m rsync -d -r var/www/static gs://{bucket_name}'
+    ctx.run('gcloud storage rsync --recursive'
+            ' --delete-unmatched-destination-objects'
+            ' var/www/static gs://{bucket_name}'
             .format(bucket_name=bucket_name), echo=False)
 
 
@@ -327,9 +329,10 @@ def create_bucket(ctx, config, bucket_name):
     """Creates a private gcloud bucket"""
     set_project(ctx, config)
 
-    ctx.run('gsutil mb gs://{bucket_name}'
+    ctx.run('gcloud storage buckets create gs://{bucket_name}'
             .format(bucket_name=bucket_name), echo=False)
-    ctx.run('gsutil defacl set private gs://{bucket_name}'
+    ctx.run('gcloud storage buckets update gs://{bucket_name}'
+            ' --predefined-default-object-acl=private'
             .format(bucket_name=bucket_name), echo=False)
 
 
@@ -338,8 +341,11 @@ def create_public_bucket(ctx, config, bucket_name):
     """Creates a public gcloud bucket"""
     set_project(ctx, config)
 
-    ctx.run('gsutil mb -b on gs://{bucket_name}'.format(bucket_name=bucket_name))
-    ctx.run('gsutil iam ch allUsers:objectViewer gs://{bucket_name}'
+    ctx.run('gcloud storage buckets create gs://{bucket_name}'
+            ' --uniform-bucket-level-access'
+            .format(bucket_name=bucket_name))
+    ctx.run('gcloud storage buckets add-iam-policy-binding gs://{bucket_name}'
+            ' --member=allUsers --role=roles/storage.objectViewer'
             .format(bucket_name=bucket_name))
 
 
