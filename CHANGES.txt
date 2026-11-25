@@ -1,3 +1,31 @@
+Version 0.6.0, unreleased
+===============================
+- New `rdeploy secret` commands manage a service's secrets in Google Secret
+  Manager, as loaded by the rehive-service chart 1.4.0+ (`secretManager` in
+  the values file), so service repos no longer need their own
+  `scripts/secret`:
+  - `rdeploy secret list <config>`: each secret and its newest version,
+    never values.
+  - `rdeploy secret set <config> <KEY>`: adds a version from a hidden prompt,
+    stdin or `--generate`, creating `<environment>--<service>--<KEY>` if
+    it's missing.
+  - `rdeploy secret check <config>`: exits nonzero unless every key in
+    `secretManager.keys` has an enabled version.
+  - `rdeploy secret restart <config>`: restarts the release's deployments so
+    pods read the new values.
+  - `rdeploy secret migrate <config>`: copies values from the namespace's
+    Kubernetes Secrets (`--map KEY=secret/field`, `--dry-run`).
+  Values are passed to gcloud on stdin; they're never printed, put on a
+  command line or written to disk. Under certificate-based access, rdeploy
+  uses Secret Manager's regional mTLS endpoint.
+- `rdeploy upgrade` checks the secrets before running helm when the values
+  file has `secretManager.enabled: true`, so a missing secret fails the
+  release straight away instead of leaving pods in ContainerCreating until
+  the timeout. `--no-secret-check` skips it.
+- `rdeploy upload-secrets` and `rdeploy decode-secret` (Kubernetes Secrets)
+  are deprecated in favour of `rdeploy secret`.
+
+----
 Version 0.5.7, unreleased
 ===============================
 - `rdeploy upload-static` now runs `gcloud storage rsync` in one process
